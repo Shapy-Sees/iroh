@@ -42,6 +42,7 @@ export interface AIService {
 }
 
 export interface MusicService {
+    executeCommand(command: string): Promise<void>;
     play(query: string): Promise<void>;
     pause(): Promise<void>;
     next(): Promise<void>;
@@ -49,6 +50,7 @@ export interface MusicService {
     setVolume(level: number): Promise<void>;
     getStatus(): Promise<MusicStatus>;
 }
+
 
 export interface HomeService {
     executeCommand(command: string): Promise<void>;

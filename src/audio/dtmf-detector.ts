@@ -1,8 +1,8 @@
 // src/audio/dtmf-detector.ts
 //
-// This file implements DTMF (Dual-Tone Multi-Frequency) tone detection
-// for telephone keypad input. It uses the Goertzel algorithm to detect
-// specific frequencies that represent different keys.
+// DTMF (Dual-Tone Multi-Frequency) detector for processing telephone keypad inputs.
+// Uses the Goertzel algorithm to detect specific frequencies that represent different keys.
+// Includes robust error handling and comprehensive logging.
 
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger';
@@ -49,16 +49,22 @@ export class DTMFDetector extends EventEmitter {
             ...config
         };
 
+        logger.debug('Initializing DTMF detector', { config: this.config });
         this.currentBuffer = new Float32Array(this.config.bufferSize);
     }
 
     public async analyze(input: AudioInput): Promise<DTMFEvent | null> {
         if (this.isProcessing) {
+            logger.debug('DTMF detector busy, skipping frame');
             return null;
         }
 
         try {
             this.isProcessing = true;
+            logger.debug('Processing DTMF input', { 
+                inputLength: input.data.length,
+                sampleRate: input.sampleRate 
+            });
 
             // Convert input buffer to float32 array for processing
             const audioData = this.normalizeAudio(input.data);
@@ -69,6 +75,10 @@ export class DTMFDetector extends EventEmitter {
             if (detectedDigit) {
                 const event = this.createDTMFEvent(detectedDigit);
                 if (event) {
+                    logger.debug('DTMF digit detected', { 
+                        digit: event.digit,
+                        duration: event.duration 
+                    });
                     this.emit('dtmf', event);
                     return event;
                 }
@@ -79,8 +89,10 @@ export class DTMFDetector extends EventEmitter {
             return null;
 
         } catch (error) {
-            logger.error('Error in DTMF detection:', error);
-            throw error;
+            // Properly handle the error type for the logger
+            const err = error instanceof Error ? error : new Error(String(error));
+            logger.error('Error in DTMF detection:', err);
+            throw err;
         } finally {
             this.isProcessing = false;
         }
@@ -112,6 +124,13 @@ export class DTMFDetector extends EventEmitter {
                 maxEnergy = energy;
                 detectedDigit = digit;
             }
+        }
+
+        if (detectedDigit) {
+            logger.debug('DTMF frequency detected', { 
+                digit: detectedDigit,
+                energy: maxEnergy 
+            });
         }
 
         return detectedDigit;
@@ -160,17 +179,22 @@ export class DTMFDetector extends EventEmitter {
     }
 
     private resetDetection(): void {
+        if (this.lastDetectedDigit) {
+            logger.debug('Resetting DTMF detection state');
+        }
         this.lastDetectedDigit = null;
         this.detectionStartTime = 0;
     }
 
     public clear(): void {
+        logger.debug('Clearing DTMF detector state');
         this.resetDetection();
         this.currentBuffer = new Float32Array(this.config.bufferSize);
         this.isProcessing = false;
     }
 
     public shutdown(): void {
+        logger.info('Shutting down DTMF detector');
         this.clear();
         this.removeAllListeners();
     }
