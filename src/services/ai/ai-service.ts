@@ -17,13 +17,28 @@
 
 import { EventEmitter } from 'events';
 import { Readable, Transform } from 'stream';
-import { AIService } from '../../types';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { ElevenLabs } from '@eleven-labs/elevenlabs-node';
-import { OpenAI } from 'openai';
 import { logger } from '../../utils/logger';
 import { ConversationManager } from './conversation-manager';
 import { Cache } from '../../utils/cache';
+
+// Define the base interface
+export interface AIService {
+    initialize(): Promise<void>;
+    generateSpeech(text: string): Promise<Buffer>;
+    shutdown(): Promise<void>;
+    processText(text: string): Promise<string>;
+    processVoice(audio: Buffer): Promise<string>;
+}
+
+export interface AIServiceConfig {
+    anthropicKey: string;
+    elevenlabsKey: string;
+    maxTokens?: number;
+    temperature?: number;
+    voiceId?: string;
+}
 
 interface StreamingConfig {
     textChunkSize: number;      // Characters per text chunk
@@ -32,17 +47,81 @@ interface StreamingConfig {
 }
 
 export class IrohAIService extends EventEmitter implements AIService {
-    // ... previous properties ...
+    private anthropic: Anthropic;
+    private isInitialized: boolean = false;
     private streamingConfig: StreamingConfig;
 
-    constructor(config: AIServiceConfig) {
+    constructor(private config: AIServiceConfig) {
         super();
-        // ... previous initialization ...
+        this.anthropic = new Anthropic({
+            apiKey: config.anthropicKey
+        });
         this.streamingConfig = {
             textChunkSize: 100,
             audioChunkSize: 4096,
             maxStreamDuration: 30000
         };
+    }
+
+    public async initialize(): Promise<void> {
+        try {
+            // Initialize AI services
+            this.isInitialized = true;
+            logger.info('AI Service initialized');
+        } catch (error) {
+            logger.error('Failed to initialize AI Service:', error);
+            throw error;
+        }
+    }
+
+    public async generateSpeech(text: string): Promise<Buffer> {
+        try {
+            // Implement speech generation
+            // This is a placeholder - implement actual ElevenLabs integration
+            return Buffer.from('Audio data would go here');
+        } catch (error) {
+            logger.error('Failed to generate speech:', error);
+            throw error;
+        }
+    }
+
+    public async processText(text: string): Promise<string> {
+        try {
+            const response = await this.anthropic.messages.create({
+                model: 'claude-3-opus-20240229',
+                max_tokens: this.config.maxTokens || 1024,
+                messages: [{
+                    role: 'user',
+                    content: text
+                }]
+            });
+            return response.content[0].text;
+        } catch (error) {
+            logger.error('Failed to process text:', error);
+            throw error;
+        }
+    }
+
+    public async processVoice(audio: Buffer): Promise<string> {
+        try {
+            // Implement voice processing
+            // This is a placeholder - implement actual voice processing
+            return "Voice processing response";
+        } catch (error) {
+            logger.error('Failed to process voice:', error);
+            throw error;
+        }
+    }
+
+    public async shutdown(): Promise<void> {
+        try {
+            // Cleanup AI services
+            this.isInitialized = false;
+            logger.info('AI Service shut down');
+        } catch (error) {
+            logger.error('Failed to shutdown AI Service:', error);
+            throw error;
+        }
     }
 
     public async processVoiceStreaming(audioBuffer: Buffer): Promise<void> {

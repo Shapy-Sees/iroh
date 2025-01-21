@@ -28,12 +28,13 @@ interface Timer {
 export class TimerService extends EventEmitter {
     private timers: Map<string, Timer>;
     private serialPort: SerialPort;
-    private phoneController: PhoneController;
-    private aiService: AIService;
     private checkInterval: NodeJS.Timeout | null = null;
-    private readonly config: Required<TimerConfig>;
 
-    constructor(config: Partial<TimerConfig>, phoneController: PhoneController, aiService: AIService) {
+    constructor(
+        private config: TimerConfig,
+        private phone: PhoneController,
+        private ai: AIService
+    ) {
         super();
         
         // Set default configuration
@@ -46,8 +47,6 @@ export class TimerService extends EventEmitter {
         };
 
         this.timers = new Map();
-        this.phoneController = phoneController;
-        this.aiService = aiService;
         
         this.serialPort = new SerialPort({
             path: this.config.devicePath,
@@ -85,10 +84,10 @@ export class TimerService extends EventEmitter {
 
     private setupVoiceCommands(): void {
         // Listen for voice commands
-        this.phoneController.on('voice', async (audioBuffer: Buffer) => {
+        this.phone.on('voice', async (audioBuffer: Buffer) => {
             try {
                 // Convert speech to text
-                const text = await this.aiService.processVoice(audioBuffer);
+                const text = await this.ai.processVoice(audioBuffer);
                 
                 // Check for timer command
                 const timerDuration = this.parseTimerCommand(text);
@@ -99,8 +98,8 @@ export class TimerService extends EventEmitter {
                     if (timer) {
                         // Provide verbal confirmation
                         const confirmationMsg = this.generateConfirmationMessage(timer);
-                        const speech = await this.aiService.generateSpeech(confirmationMsg);
-                        await this.phoneController.playAudio(speech);
+                        const speech = await this.ai.generateSpeech(confirmationMsg);
+                        await this.phone.playAudio(speech);
                     }
                 }
             } catch (error) {
@@ -202,13 +201,13 @@ export class TimerService extends EventEmitter {
 
         try {
             // Ring the phone
-            await this.phoneController.ring(3000); // Ring for 3 seconds
+            await this.phone.ring(3000); // Ring for 3 seconds
             
             // Play timer completion message when answered
-            this.phoneController.once('off_hook', async () => {
-                await this.phoneController.playTone('confirm');
-                const speech = await this.aiService.generateSpeech("Your timer has completed.");
-                await this.phoneController.playAudio(speech);
+            this.phone.once('off_hook', async () => {
+                await this.phone.playTone('confirm');
+                const speech = await this.ai.generateSpeech("Your timer has completed.");
+                await this.phone.playAudio(speech);
             });
         } catch (error) {
             logger.error('Error handling timer completion:', error);

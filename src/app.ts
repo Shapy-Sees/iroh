@@ -69,10 +69,11 @@ export class IrohApp {
             maxDuration: 180 // 3 hours in minutes
         };
 
+        const aiService = this.serviceManager.getAIService();
         this.timerService = new TimerService(
             timerConfig,
             this.phoneController,
-            this.serviceManager.getAIService()
+            aiService
         );
 
         // Handle timer service errors
@@ -131,12 +132,18 @@ export class IrohApp {
 
     private async handleServiceError(error: Error): Promise<void> {
         try {
-            const errorMessage = await this.serviceManager.getAIService()
+            const aiService = this.serviceManager.getAIService();
+            const errorMessage = await aiService
                 .generateSpeech("I apologize, but I'm having trouble with the timer system. Please try again later.");
             
             await this.phoneController.playAudio(errorMessage);
-        } catch (err) {
-            logger.error('Error handling service error:', err);
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                logger.error('Error handling service error:', error);
+            } else {
+                logger.error('Unknown error occurred while handling service error:', 
+                    new Error(String(error)));
+            }
         }
     }
 

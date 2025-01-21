@@ -23,6 +23,11 @@ export class ServiceManager extends EventEmitter {
 
     constructor(private config: Config) {
         super();
+        this.ai = new IrohAIService(config.ai);
+    }
+
+    public getAIService(): IrohAIService {
+        return this.ai;
     }
 
     public async initialize(): Promise<void> {
