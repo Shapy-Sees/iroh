@@ -1,3 +1,5 @@
+This project is written 100% by Claude AI ... so far.
+
 # Iroh 🍵
 
 An AI operator for your vintage telephone, bringing the latest technology of the 19th century to your smart home.
