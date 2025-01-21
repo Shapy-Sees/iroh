@@ -6,8 +6,8 @@
 
 import { z } from 'zod';
 import dotenv from 'dotenv';
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
 import { logger } from '../utils/logger';
 
 // Load environment variables
@@ -41,6 +41,12 @@ const ConfigSchema = z.object({
             name: z.string().default('Iroh Bridge'),
             port: z.number().default(47128),
         }),
+    }),
+    timer: z.object({
+        devicePath: z.string().default('/dev/ttyUSB1'),
+        baudRate: z.number().default(9600),
+        maxTimers: z.number().default(5),
+        maxDuration: z.number().default(180),
     }),
     logging: z.object({
         level: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
