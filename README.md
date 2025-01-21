@@ -1,5 +1,6 @@
 <img width="556" alt="Screenshot 2025-01-20 at 6 17 10 PM jpeg" src="https://github.com/user-attachments/assets/0bcbfcba-5f39-49fc-abaf-9cf0b29b60a4" />
-This project is written 100% by Claude AI ... so far.
+
+This project is written mostly by Claude AI ... so far.
 
 # Iroh 🍵
 

@@ -1,20 +1,19 @@
-// File: src/app.ts
+// src/app.ts
 //
-// Description:
 // Main application entry point for Project Iroh.
-// Initializes all core services and handles application lifecycle.
+// Initializes and coordinates all core services including the new timer service.
 
 import { PhoneController } from './controllers/phone-controller';
 import { ServiceManager } from './services/service-manager';
+import { TimerService } from './services/timer/timer-service';
 import { PhoneControllerConfig } from './types';
 import { config } from './config';
 import { logger } from './utils/logger';
 
-// Remove local interface definition and use the imported one
-
 export class IrohApp {
-    private phoneController!: PhoneController; // Using definite assignment assertion
+    private phoneController!: PhoneController;
     private serviceManager: ServiceManager;
+    private timerService!: TimerService;
 
     constructor() {
         this.serviceManager = new ServiceManager(config);
@@ -30,7 +29,7 @@ export class IrohApp {
                 channels: config.audio.channels,
                 bitDepth: config.audio.bitDepth
             },
-            ai: config.ai // Add ai configuration
+            ai: config.ai
         };
         
         this.phoneController = new PhoneController(phoneConfig);
@@ -43,8 +42,14 @@ export class IrohApp {
             // Initialize services
             await this.serviceManager.initialize();
             
+            // Initialize timer service after other services
+            this.initializeTimerService();
+            
             // Start phone controller
             await this.phoneController.start();
+
+            // Start timer service
+            await this.timerService.start();
 
             // Set up event handlers
             this.setupEventHandlers();
@@ -54,6 +59,27 @@ export class IrohApp {
             logger.error('Failed to start application:', error as Error);
             throw error;
         }
+    }
+
+    private initializeTimerService(): void {
+        const timerConfig = {
+            devicePath: process.env.TIMER_DEVICE_PATH || '/dev/ttyUSB1',
+            baudRate: 9600,
+            maxTimers: 5,
+            maxDuration: 180 // 3 hours in minutes
+        };
+
+        this.timerService = new TimerService(
+            timerConfig,
+            this.phoneController,
+            this.serviceManager.getAIService()
+        );
+
+        // Handle timer service errors
+        this.timerService.on('error', async (error: Error) => {
+            logger.error('Timer service error:', error);
+            await this.handleServiceError(error);
+        });
     }
 
     private setupEventHandlers(): void {
@@ -72,6 +98,11 @@ export class IrohApp {
                 logger.error('Error handling voice command:', error as Error);
             }
         });
+
+        // Handle timer completions
+        this.timerService.on('timerComplete', async (timerId: string) => {
+            logger.info('Timer completed', { timerId });
+        });
     }
 
     private async handleDTMFCommand(digit: string): Promise<void> {
@@ -79,14 +110,12 @@ export class IrohApp {
         await this.serviceManager.handleCommand(digit);
     }
 
-    // Update handleVoiceCommand to use public methods
     private async handleVoiceCommand(audioBuffer: Buffer): Promise<void> {
         try {
             await this.serviceManager.handleCommand('voice', audioBuffer);
             
             this.serviceManager.once('response', async (audioResponse: Buffer) => {
                 try {
-                    // Use playTone instead of playFeedbackTone
                     await this.phoneController.playTone('confirm');
                     await this.phoneController.playAudio(audioResponse);
                 } catch (error) {
@@ -100,12 +129,28 @@ export class IrohApp {
         }
     }
 
+    private async handleServiceError(error: Error): Promise<void> {
+        try {
+            const errorMessage = await this.serviceManager.getAIService()
+                .generateSpeech("I apologize, but I'm having trouble with the timer system. Please try again later.");
+            
+            await this.phoneController.playAudio(errorMessage);
+        } catch (err) {
+            logger.error('Error handling service error:', err);
+        }
+    }
 
     public async shutdown(): Promise<void> {
         try {
             logger.info('Shutting down Iroh application...');
             
+            // Stop timer service
+            await this.timerService.stop();
+            
+            // Stop phone controller
             await this.phoneController.stop();
+            
+            // Stop service manager
             await this.serviceManager.shutdown();
             
             logger.info('Iroh application shutdown complete');
@@ -138,134 +183,3 @@ if (require.main === module) {
 }
 
 export default IrohApp;
-
-/*
-// src/app.ts
-//
-// Key Features:
-// - Main application setup
-// - Service coordination
-// - Phone controller integration
-// - Error handling
-// - Graceful shutdown
-// - State management
-
-import { ServiceManager } from './services/service-manager';
-import { PhoneController } from './controllers/phone-controller';
-import { Config } from './types';
-import { logger } from './utils/logger';
-import { config } from './config';
-
-export class IrohApp {
-    private services: ServiceManager;
-    private phoneController: PhoneController | undefined;
-    private isRunning: boolean = false;
-
-    constructor() {
-        this.services = new ServiceManager(config);
-    }
-
-    public async start(): Promise<void> {
-        try {
-            logger.info('Starting Iroh application...');
-
-            // Initialize services
-            await this.services.initialize();
-
-            // Initialize phone controller
-            this.phoneController = new PhoneController({
-                fxs: config.audio,
-                ai: config.ai
-            });
-
-            // Set up phone event handlers
-            this.setupPhoneHandlers();
-
-            // Start phone controller
-            await this.phoneController.start();
-
-            this.isRunning = true;
-            logger.info('Iroh application started successfully');
-
-            // Set up graceful shutdown
-            this.setupShutdown();
-
-        } catch (error) {
-            logger.error('Failed to start application:', error as Error);
-            await this.shutdown();
-            throw error;
-        }
-    }
-
-    private setupPhoneHandlers(): void {
-        // Handle DTMF commands
-        this.phoneController!.on('command', async (sequence) => {
-            try {
-                await this.services.handleCommand(sequence);
-            } catch (error) {
-                logger.error('Error handling DTMF command:', error as Error);
-            }
-        });
-
-        // Handle voice input
-        this.phoneController!.on('voice', async (event) => {
-            try {
-                await this.services.handleCommand('', event.audio);
-            } catch (error) {
-                logger.error('Error handling voice command:', error as Error);
-            }
-        });
-
-        // Handle service responses
-        this.services.on('response', async (audioBuffer: Buffer) => {
-            try {
-                await this.phoneController!.playAudio(audioBuffer);
-            } catch (error) {
-                logger.error('Error playing response:', error as Error);
-            }
-        });
-    }
-
-    private setupShutdown(): void {
-        // Handle process signals
-        process.on('SIGTERM', () => this.shutdown());
-        process.on('SIGINT', () => this.shutdown());
-        
-        // Handle uncaught errors
-        process.on('uncaughtException', (error) => {
-            logger.error('Uncaught exception:', error);
-            this.shutdown();
-        });
-    }
-
-    public async shutdown(): Promise<void> {
-        if (!this.isRunning) return;
-
-        logger.info('Shutting down Iroh application...');
-        
-        try {
-            // Shutdown phone controller
-            await this.phoneController!.stop();
-
-            // Shutdown services
-            await this.services.shutdown();
-
-            this.isRunning = false;
-            logger.info('Iroh application shut down successfully');
-            
-        } catch (error) {
-            logger.error('Error during shutdown:', error as Error);
-            process.exit(1);
-        }
-    }
-}
-
-// Application entry point
-if (require.main === module) {
-    const app = new IrohApp();
-    app.start().catch((error) => {
-        logger.error('Application startup failed:', error);
-        process.exit(1);
-    });
-}
-*/
