@@ -1,6 +1,6 @@
 # Iroh 🍵
 
-A wise AI assistant for your vintage telephone, bringing harmony to your smart home.
+An AI operator for your vintage telephone, bringing the latest technology of the 19th century to your smart home.
 
 ## Features
 
@@ -10,6 +10,15 @@ A wise AI assistant for your vintage telephone, bringing harmony to your smart h
 - ⌨️ DTMF Control Shortcuts
 - 🌤️ Weather Updates
 - 🔍 Web-Enabled AI Responses
+
+## Technologies Used
+
+- Python
+- Docker
+- HomeKit
+- Spotify API
+- Apple Music API
+- OpenWeatherMap API
 
 ## Development
 
@@ -28,3 +37,5 @@ docker-compose logs -f
 Like Uncle Iroh, this AI assistant aims to provide wisdom, guidance, and a touch of humor through your vintage telephone. It helps maintain harmony in your smart home while appreciating the beauty of both old and new technologies working together.
 
 > "Life happens wherever you are, whether you make it or not." - Uncle Iroh
+
+

@@ -2,11 +2,12 @@
   "name": "iroh",
   "version": "1.0.0",
   "description": "A wise AI assistant for your vintage telephone",
-  "main": "dist/server.js",
+  "main": "sec/app.ts",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/server.js",
-    "dev": "ts-node src/server.ts",
+    "start": "node src/app.ts",
+    "dev": "ts-node src/app.ts",
+    "watch": "tsc -w",
     "test": "jest"
   },
   "dependencies": {
@@ -15,8 +16,10 @@
     "winston": "^3.3.3",
     "axios": "^0.24.0",
     "@anthropic-ai/sdk": "^0.4.3",
-    "@eleven-labs/elevenlabs-node": "^1.0.1",
-    "spotify-web-api-node": "^5.0.2"
+    "elevenlabs-node": "^1.0.1",
+    "spotify-web-api-node": "^5.0.2",
+    "rpio": "^2.4.2",
+    "winston-daily-rotate-file": "^4.7.1"
   },
   "devDependencies": {
     "@types/express": "^4.17.13",
@@ -26,5 +29,8 @@
     "ts-node": "^10.4.0",
     "jest": "^27.3.1",
     "ts-jest": "^27.0.7"
+  },
+  "config": {
+    "unsafe-perm": true
   }
 }
