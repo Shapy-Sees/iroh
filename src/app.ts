@@ -35,6 +35,11 @@ export class IrohApp {
         this.phoneController = new PhoneController(phoneConfig);
     }
 
+    // Add getter for phone controller - needed for debug console
+    public getPhoneController(): PhoneController {
+        return this.phoneController;
+    }
+
     public async start(): Promise<void> {
         try {
             logger.info('Starting Iroh application...');

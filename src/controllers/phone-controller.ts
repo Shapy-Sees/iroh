@@ -14,6 +14,9 @@ import { AudioInput } from '../types';
 import { logger } from '../utils/logger';
 import { FXSHardwareConfig, fxsConfig } from '../config/fxs.config';
 
+// Define available tone types
+export type ToneType = 'dial' | 'busy' | 'confirm' | 'error';
+
 interface PhoneControllerConfig {
     fxs: Required<Pick<FXSHardwareConfig, 'sampleRate'>> & Partial<FXSHardwareConfig>;
 }
@@ -22,7 +25,7 @@ export class PhoneController extends EventEmitter {
     private fxs: FXSInterface;
     private dtmfDetector: DTMFDetector;
     private isActive: boolean = false;
-    private readonly feedbackTones: Map<string, Buffer>;
+    private readonly feedbackTones: Map<ToneType, Buffer>;
     private readonly config: PhoneControllerConfig;
     private commandBuffer: string[] = [];
     private lastCommandTime: number = 0;
@@ -49,14 +52,14 @@ export class PhoneController extends EventEmitter {
         this.setupEventHandlers();
     }
 
-    private initializeFeedbackTones(): Map<string, Buffer> {
-        const tones = new Map<string, Buffer>();
+    private initializeFeedbackTones(): Map<ToneType, Buffer> {
+        const tones = new Map<ToneType, Buffer>();
         
         // Generate common phone tones
-        tones.set('dial', this.generateTone(350, 440, 1.0));  // Dial tone
-        tones.set('confirm', this.generateTone(600, 0, 0.2)); // Confirmation beep
-        tones.set('error', this.generateTone(480, 620, 0.3)); // Error tone
-        tones.set('busy', this.generateTone(480, 620, 0.5));  // Busy signal
+        tones.set('dial', this.generateTone(350, 440, 1.0));   // Continuous dial tone
+        tones.set('busy', this.generateTone(480, 620, 0.5));   // Repeating busy signal
+        tones.set('confirm', this.generateTone(600, 0, 0.2));  // Short confirmation beep
+        tones.set('error', this.generateTone(480, 620, 0.3));  // Error tone
         
         return tones;
     }
@@ -119,19 +122,26 @@ export class PhoneController extends EventEmitter {
         }
     }
 
-    public async playTone(type: 'confirm' | 'error' | 'dial' | 'busy'): Promise<void> {
+    public async playTone(type: ToneType): Promise<void> {
+        if (!this.isActive) {
+            logger.warn('Cannot play tone - phone is not active');
+            return;
+        }
+
         const tone = this.feedbackTones.get(type);
-        if (!tone || !this.isActive) {
-            logger.warn('Cannot play tone:', { type, isActive: this.isActive });
+        if (!tone) {
+            logger.warn('Tone not found:', { type });
             return;
         }
 
         try {
             await this.fxs.playAudio(tone);
+            logger.debug('Played tone', { type });
         } catch (error) {
-            const err = error instanceof Error ? error : new Error('Unknown error playing tone');
-            logger.error('Error playing tone:', err);
-            throw err;
+            if (error instanceof Error) {
+                logger.error('Error playing tone:', error);
+                throw error;
+            }
         }
     }
 

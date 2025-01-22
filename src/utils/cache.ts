@@ -1,22 +1,9 @@
-// File: src/utils/cache.ts
+// src/utils/cache.ts
 //
-// Description:
 // A flexible caching system for storing and retrieving data with expiration.
 // Used throughout the Iroh project for caching AI responses, audio data,
 // and other frequently accessed information to improve performance and
 // reduce API calls.
-//
-// Key features:
-// - TTL (Time To Live) expiration
-// - Size-based LRU eviction
-// - Namespacing
-// - TypeScript generics
-// - Event emission
-// - Automatic cleanup
-//
-// Usage:
-// Import in other modules like:
-// import { Cache } from '../utils/cache';
 
 import { EventEmitter } from 'events';
 import { logger } from './logger';
@@ -78,7 +65,7 @@ export class Cache extends EventEmitter {
                 key: namespacedKey 
             });
         } catch (error) {
-            logger.error('Error setting cache item:', error);
+            logger.error('Error setting cache item:', error instanceof Error ? error : new Error(String(error)));
             throw error;
         }
     }
@@ -101,7 +88,7 @@ export class Cache extends EventEmitter {
             this.emit('hit', { key: namespacedKey });
             return item.value as T;
         } catch (error) {
-            logger.error('Error getting cache item:', error);
+            logger.error('Error getting cache item:', error instanceof Error ? error : new Error(String(error)));
             throw error;
         }
     }

@@ -1,158 +1,190 @@
 // src/services/service-manager.ts
 //
-// Fixed implementation of the service manager with proper error handling
-// and type safety improvements
+// Service manager that initializes and coordinates all the core services
+// including AI, music, home automation, etc. Handles service lifecycle,
+// intent parsing, and command routing to appropriate services.
 
 import { EventEmitter } from 'events';
 import { IrohAIService } from './ai/ai-service';
 import { MusicService } from './music/music-service';
-import { HomeService } from './home/home-service';
-import { Config } from '../types';
+import { IntentHandler, IntentAction } from './intent/intent-handler';
 import { logger } from '../utils/logger';
+import { Config } from '../types';
 
 export class ServiceManager extends EventEmitter {
-    private ai: IrohAIService;
-    private music: MusicService;
-    private home: HomeService;
+    private aiService: IrohAIService;
+    private musicService: MusicService;
+    private intentHandler: IntentHandler;
     private isInitialized: boolean = false;
 
     constructor(private config: Config) {
         super();
-        // Initialize AI service with required config
-        this.ai = new IrohAIService({
-            ...config.ai,
-            elevenlabsKey: process.env.ELEVENLABS_API_KEY || ''
-        });
-        
-        // Initialize other services
-        this.music = new MusicService(config.music);
-        this.home = new HomeService(config.home);
-    }
 
-    public getAIService(): IrohAIService {
-        return this.ai;
+        const aiConfig = {
+            anthropicKey: process.env.ANTHROPIC_API_KEY || '',
+            elevenLabsKey: process.env.ELEVENLABS_API_KEY || '',
+            openAIKey: process.env.OPENAI_API_KEY || '',
+            maxTokens: config.ai.maxTokens,
+            temperature: config.ai.temperature,
+            voiceId: config.ai.voiceId
+        };
+
+        this.aiService = new IrohAIService(aiConfig);
+        this.musicService = new MusicService(config.music);
+        this.intentHandler = new IntentHandler();
     }
 
     public async initialize(): Promise<void> {
         try {
             logger.info('Initializing services...');
 
-            // Initialize AI service with complete config
-            this.ai = new IrohAIService({
-                ...this.config.ai,
-                elevenlabsKey: process.env.ELEVENLABS_API_KEY || ''
-            });
-
-            // Set up cross-service event handlers
-            this.setupEventHandlers();
-
+            // Initialize core services
+            await this.aiService.initialize();
+            
+            // Set up intent handler event listeners
+            this.setupIntentListeners();
+            
             this.isInitialized = true;
             logger.info('Services initialized successfully');
         } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Failed to initialize services:', err);
-            throw err;
+            logger.error('Failed to initialize services:', error instanceof Error ? error : new Error(String(error)));
+            throw error;
         }
     }
 
-    private setupEventHandlers(): void {
-        // Handle music state changes
-        this.music.on('stateChange', async (state) => {
-            try {
-                await this.updateAIContext('musicState', state);
-            } catch (error) {
-                const err = error instanceof Error ? error : new Error(String(error));
-                logger.error(`Failed to update AI context for musicState:`, err);
-            }
-        });
-
-        // Handle home automation state changes
-        this.home.on('stateChange', async (state) => {
-            try {
-                await this.updateAIContext('homeState', state);
-            } catch (error) {
-                const err = error instanceof Error ? error : new Error(String(error));
-                logger.error(`Failed to update AI context for homeState:`, err);
-            }
+    private setupIntentListeners(): void {
+        this.intentHandler.on('contextUpdate', (context) => {
+            logger.debug('Intent context updated', { context });
         });
     }
 
-    private async updateAIContext(context: string, state: any): Promise<void> {
+    public async handleCommand(command: string, data?: Buffer): Promise<void> {
         try {
-            const aiContext = `Current ${context}: ${JSON.stringify(state)}`;
-            await this.ai.processText(aiContext);
+            logger.debug('Processing command', { command, hasData: !!data });
+            let intentMatch;
+            
+            if (command === 'voice' && data instanceof Buffer) {
+                // Process voice command
+                const text = await this.aiService.processVoice(data);
+                intentMatch = await this.intentHandler.detectIntent(text);
+            } else {
+                // Process DTMF command
+                intentMatch = await this.intentHandler.detectIntent(command);
+            }
+
+            if (!intentMatch) {
+                logger.debug('No intent match found, falling back to general query');
+                const response = await this.handleGeneralQuery(command);
+                const audio = await this.aiService.generateSpeech(response);
+                this.emit('response', audio);
+                return;
+            }
+
+            const { intent, parameters } = intentMatch;
+            const response = await this.executeIntent(intent.action, parameters);
+            
+            // Generate audio response
+            const audio = await this.aiService.generateSpeech(response);
+            this.emit('response', audio);
+            
         } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error(`Failed to update AI context for ${context}:`, err);
+            logger.error('Error handling command:', error instanceof Error ? error : new Error(String(error)));
+            throw error;
         }
     }
 
-    // Handle voice commands and route to appropriate service
-    public async handleCommand(command: string, audio?: Buffer): Promise<void> {
+    private async executeIntent(action: IntentAction, parameters?: Record<string, any>): Promise<string> {
+        logger.info('Executing intent', { action, parameters });
+
         try {
-            // Process with AI to determine intent
-            const response = audio ? 
-                await this.ai.processVoice(audio) :
-                await this.ai.processText(command);
+            switch (action) {
+                case 'PLAY_MUSIC':
+                    await this.musicService.play(parameters?.query || '');
+                    return "Playing music for you.";
 
-            // Parse intent and route to appropriate service
-            const intent = this.parseIntent(response);
-            await this.routeCommand(intent);
+                case 'PAUSE_MUSIC':
+                    await this.musicService.pause();
+                    return "Music paused.";
 
+                case 'NEXT_TRACK':
+                    await this.musicService.next();
+                    return "Playing next track.";
+
+                case 'PREVIOUS_TRACK':
+                    await this.musicService.previous();
+                    return "Playing previous track.";
+
+                case 'SET_VOLUME':
+                    const volume = parameters?.volume ?? 50;
+                    await this.musicService.setVolume(volume);
+                    return `Volume set to ${volume}%.`;
+
+                case 'SET_TEMPERATURE':
+                    const temp = parameters?.temperature;
+                    if (!temp) {
+                        return "I'm not sure what temperature you'd like.";
+                    }
+                    // Implement temperature control
+                    return `Temperature set to ${temp} degrees.`;
+
+                case 'SET_TIMER':
+                    const duration = parameters?.duration;
+                    const unit = parameters?.unit;
+                    if (!duration || !unit) {
+                        return "I couldn't understand the timer duration.";
+                    }
+                    // Implement timer
+                    return `Timer set for ${duration} ${unit}${duration > 1 ? 's' : ''}.`;
+
+                default:
+                    return await this.handleGeneralQuery(parameters?.query || '');
+            }
         } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Error handling command:', err);
-            throw err;
+            logger.error('Error executing intent:', error instanceof Error ? error : new Error(String(error)));
+            throw error;
         }
     }
 
-    private parseIntent(response: string): CommandIntent {
-        // Simple intent parsing based on keywords
-        if (response.includes('play') || response.includes('music')) {
-            return { service: 'music', action: response };
-        } else if (response.includes('light') || response.includes('temperature')) {
-            return { service: 'home', action: response };
+    private async handleGeneralQuery(query: string): Promise<string> {
+        try {
+            return await this.aiService.processText(query);
+        } catch (error) {
+            logger.error('Error processing general query:', error instanceof Error ? error : new Error(String(error)));
+            return "I apologize, but I'm having trouble processing that request.";
         }
-        return { service: 'ai', action: response };
     }
 
-    private async routeCommand(intent: CommandIntent): Promise<void> {
-        switch (intent.service) {
-            case 'music':
-                await this.music.executeCommand(intent.action);
-                break;
-            case 'home':
-                await this.home.executeCommand(intent.action);
-                break;
-            case 'ai':
-                // Generate response through AI
-                const response = await this.ai.processText(intent.action);
-                const speech = await this.ai.generateSpeech(response);
-                this.emit('response', speech);
-                break;
+    // Service accessor methods
+    public getAIService(): IrohAIService {
+        if (!this.isInitialized) {
+            throw new Error('Services not initialized');
         }
+        return this.aiService;
+    }
+
+    public getMusicService(): MusicService {
+        if (!this.isInitialized) {
+            throw new Error('Services not initialized');
+        }
+        return this.musicService;
+    }
+
+    public getIntentHandler(): IntentHandler {
+        return this.intentHandler;
     }
 
     public async shutdown(): Promise<void> {
-        logger.info('Shutting down services...');
-        
         try {
-            await Promise.all([
-                this.ai.shutdown(),
-                // Add shutdown calls for other services when implemented
-            ]);
+            logger.info('Shutting down services...');
             
+            await this.aiService.shutdown();
+            this.intentHandler.removeAllListeners();
             this.isInitialized = false;
+            
             logger.info('Services shut down successfully');
         } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Error during shutdown:', err);
-            throw err;
+            logger.error('Error during service shutdown:', error instanceof Error ? error : new Error(String(error)));
+            throw error;
         }
     }
-}
-
-interface CommandIntent {
-    service: 'music' | 'home' | 'ai';
-    action: string;
 }

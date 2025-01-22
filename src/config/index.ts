@@ -1,4 +1,4 @@
-// File: src/config/index.ts
+// src/config/index.ts
 //
 // Description:
 // Configuration loader that combines config files and environment variables.
