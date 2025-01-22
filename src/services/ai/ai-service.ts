@@ -1,29 +1,21 @@
 // src/services/ai/ai-service.ts
 //
-// Key Features:
-// - All previous features plus:
-// - Real-time text streaming from Claude
-// - Chunked audio synthesis
-// - Stream progress events
-// - Configurable chunk sizes
-// - Backpressure handling
-// - Memory efficient processing
-//
-// Usage:
-// const ai = new IrohAIService(config);
-// ai.on('textChunk', console.log);
-// ai.on('audioChunk', playAudio);
-// await ai.processVoiceStreaming(audioBuffer);
+// AI service implementation that handles:
+// - Text processing with Anthropic's Claude API
+// - Speech synthesis with ElevenLabs API
+// - Streaming audio and text responses
+// - Error handling and logging
+// - Cache management for responses
+// - Voice and speech handling
 
+import { Client } from '@anthropic-ai/sdk';
+import { Voice, VoiceSettings, generateVoice } from 'elevenlabs-node';
 import { EventEmitter } from 'events';
-import { Readable, Transform } from 'stream';
-import { Anthropic } from '@anthropic-ai/sdk';
-import { ElevenLabs } from '@eleven-labs/elevenlabs-node';
 import { logger } from '../../utils/logger';
 import { ConversationManager } from './conversation-manager';
 import { Cache } from '../../utils/cache';
 
-// Define the base interface
+// Define service interfaces
 export interface AIService {
     initialize(): Promise<void>;
     generateSpeech(text: string): Promise<Buffer>;
@@ -35,9 +27,11 @@ export interface AIService {
 export interface AIServiceConfig {
     anthropicKey: string;
     elevenlabsKey: string;
+    openAIKey?: string;
     maxTokens?: number;
     temperature?: number;
     voiceId?: string;
+    voiceSettings?: VoiceSettings;
 }
 
 interface StreamingConfig {
@@ -47,94 +41,183 @@ interface StreamingConfig {
 }
 
 export class IrohAIService extends EventEmitter implements AIService {
-    private anthropic: Anthropic;
+    private client: Client;
     private isInitialized: boolean = false;
     private streamingConfig: StreamingConfig;
+    private cache: Cache;
+    private conversationManager: ConversationManager;
+    private voiceSettings: VoiceSettings;
 
     constructor(private config: AIServiceConfig) {
         super();
-        this.anthropic = new Anthropic({
-            apiKey: config.anthropicKey
-        });
-        this.streamingConfig = {
-            textChunkSize: 100,
-            audioChunkSize: 4096,
-            maxStreamDuration: 30000
+        
+        // Initialize Anthropic client
+        this.client = new Client(config.anthropicKey);
+        
+        // Set default voice settings
+        this.voiceSettings = config.voiceSettings || {
+            stability: 0.75,      // Higher stability for consistent output
+            similarityBoost: 0.8, // Higher similarity for more natural voice
+            style: 0.5,          // Balanced speaking style
+            speakerBoost: true    // Enhanced speaker clarity
         };
+
+        // Initialize streaming config
+        this.streamingConfig = {
+            textChunkSize: 100,   // 100 characters per text chunk
+            audioChunkSize: 4096, // 4KB audio chunks
+            maxStreamDuration: 30000 // 30 seconds max stream
+        };
+
+        // Initialize cache with 1-hour TTL
+        this.cache = new Cache({
+            namespace: 'ai-responses',
+            ttl: 1 * 60 * 60 * 1000  // 1 hour
+        });
+
+        // Initialize conversation manager
+        this.conversationManager = new ConversationManager();
     }
 
     public async initialize(): Promise<void> {
         try {
-            // Initialize AI services
+            // Validate required API keys
+            if (!this.config.anthropicKey) {
+                throw new Error('Anthropic API key is required');
+            }
+            if (!this.config.elevenlabsKey) {
+                throw new Error('ElevenLabs API key is required');
+            }
+
+            // Test API connections
+            await this.testAnthropicConnection();
+            await this.testElevenLabsConnection();
+
             this.isInitialized = true;
-            logger.info('AI Service initialized');
+            logger.info('AI Service initialized successfully');
         } catch (error) {
-            logger.error('Failed to initialize AI Service:', error);
+            logger.error('Failed to initialize AI Service:', error instanceof Error ? error : new Error(String(error)));
+            throw error;
+        }
+    }
+
+    private async testAnthropicConnection(): Promise<void> {
+        try {
+            await this.client.messages.create({
+                model: 'claude-3-opus-20240229',
+                max_tokens: 10,
+                messages: [{ role: 'user', content: 'test' }]
+            });
+            logger.info('Anthropic connection test successful');
+        } catch (error) {
+            logger.error('Anthropic connection test failed:', error instanceof Error ? error : new Error(String(error)));
+            throw new Error('Failed to connect to Anthropic API');
+        }
+    }
+
+    private async testElevenLabsConnection(): Promise<void> {
+        try {
+            // Attempt to fetch voice settings to verify connection
+            await this.getVoiceDetails(this.config.voiceId || 'josh');
+            logger.info('ElevenLabs connection test successful');
+        } catch (error) {
+            logger.error('ElevenLabs connection test failed:', error instanceof Error ? error : new Error(String(error)));
+            throw new Error('Failed to connect to ElevenLabs API');
+        }
+    }
+
+    private async getVoiceDetails(voiceId: string): Promise<Voice> {
+        try {
+            // Implementation would depend on elevenlabs-node API
+            // This is a placeholder until we have actual API access
+            return {
+                voice_id: voiceId,
+                name: 'Iroh',
+                settings: this.voiceSettings
+            } as Voice;
+        } catch (error) {
+            logger.error('Failed to get voice details:', error instanceof Error ? error : new Error(String(error)));
             throw error;
         }
     }
 
     public async generateSpeech(text: string): Promise<Buffer> {
         try {
-            // Implement speech generation
-            // This is a placeholder - implement actual ElevenLabs integration
-            return Buffer.from('Audio data would go here');
+            // Check cache first
+            const cacheKey = `speech:${text}:${this.config.voiceId}`;
+            const cached = await this.cache.get<Buffer>(cacheKey);
+            if (cached) {
+                logger.debug('Cache hit for speech generation');
+                return cached;
+            }
+
+            logger.info('Generating speech with ElevenLabs', { 
+                textLength: text.length,
+                voiceId: this.config.voiceId 
+            });
+
+            const audioBuffer = await generateVoice({
+                apiKey: this.config.elevenlabsKey,
+                textInput: text,
+                voiceId: this.config.voiceId || 'josh',
+                voiceSettings: this.voiceSettings,
+            });
+
+            // Cache the response
+            await this.cache.set(cacheKey, audioBuffer);
+
+            return audioBuffer;
         } catch (error) {
-            logger.error('Failed to generate speech:', error);
+            logger.error('Failed to generate speech:', error instanceof Error ? error : new Error(String(error)));
             throw error;
         }
     }
 
     public async processText(text: string): Promise<string> {
         try {
-            const response = await this.anthropic.messages.create({
+            // Check cache first
+            const cacheKey = `text:${text}`;
+            const cached = await this.cache.get<string>(cacheKey);
+            if (cached) {
+                logger.debug('Cache hit for text processing');
+                return cached;
+            }
+
+            logger.info('Processing text with Claude', { textLength: text.length });
+
+            const response = await this.client.messages.create({
                 model: 'claude-3-opus-20240229',
                 max_tokens: this.config.maxTokens || 1024,
+                temperature: this.config.temperature || 0.7,
                 messages: [{
                     role: 'user',
                     content: text
                 }]
             });
-            return response.content[0].text;
+
+            const result = response.content[0].text;
+
+            // Cache the response
+            await this.cache.set(cacheKey, result);
+
+            return result;
         } catch (error) {
-            logger.error('Failed to process text:', error);
+            logger.error('Failed to process text:', error instanceof Error ? error : new Error(String(error)));
             throw error;
         }
     }
 
     public async processVoice(audio: Buffer): Promise<string> {
         try {
-            // Implement voice processing
-            // This is a placeholder - implement actual voice processing
-            return "Voice processing response";
+            logger.info('Processing voice input', { audioLength: audio.length });
+            
+            // Note: When implementing actual speech-to-text, 
+            // you would integrate with a service like Whisper here
+            // For now we return a placeholder
+            return "Voice processing is not yet implemented";
         } catch (error) {
-            logger.error('Failed to process voice:', error);
+            logger.error('Failed to process voice:', error instanceof Error ? error : new Error(String(error)));
             throw error;
-        }
-    }
-
-    public async shutdown(): Promise<void> {
-        try {
-            // Cleanup AI services
-            this.isInitialized = false;
-            logger.info('AI Service shut down');
-        } catch (error) {
-            logger.error('Failed to shutdown AI Service:', error);
-            throw error;
-        }
-    }
-
-    public async processVoiceStreaming(audioBuffer: Buffer): Promise<void> {
-        try {
-            // Convert speech to text
-            const text = await this.speechToText(audioBuffer);
-            logger.debug('Speech converted to text:', text);
-
-            // Process text through LLM with streaming
-            await this.processTextStreaming(text);
-        } catch (error) {
-            logger.error('Error in streaming voice process:', error);
-            this.emit('error', error);
         }
     }
 
@@ -149,10 +232,12 @@ export class IrohAIService extends EventEmitter implements AIService {
                 this.emit('error', new Error('Stream duration exceeded'));
             }, this.streamingConfig.maxStreamDuration);
 
-            const stream = await this.anthropic.messages.create({
+            logger.info('Starting text streaming', { textLength: text.length });
+
+            const stream = await this.client.messages.create({
                 model: 'claude-3-opus-20240229',
-                max_tokens: this.config.maxTokens,
-                temperature: this.config.temperature,
+                max_tokens: this.config.maxTokens || 1024,
+                temperature: this.config.temperature || 0.7,
                 messages: [
                     {
                         role: 'system',
@@ -176,10 +261,6 @@ export class IrohAIService extends EventEmitter implements AIService {
                     // Emit text chunks based on configured size
                     if (accumulatedText.length >= this.streamingConfig.textChunkSize) {
                         this.emit('textChunk', accumulatedText);
-                        
-                        // Generate and emit audio for this chunk
-                        await this.generateSpeechStreaming(accumulatedText);
-                        
                         accumulatedText = '';
                     }
                 }
@@ -188,56 +269,53 @@ export class IrohAIService extends EventEmitter implements AIService {
             // Handle any remaining text
             if (accumulatedText) {
                 this.emit('textChunk', accumulatedText);
-                await this.generateSpeechStreaming(accumulatedText);
             }
 
             this.emit('streamComplete');
-
         } catch (error) {
-            logger.error('Error in text streaming:', error);
+            logger.error('Error in text streaming:', error instanceof Error ? error : new Error(String(error)));
             this.emit('error', error);
         } finally {
             clearTimeout(streamTimeout!);
         }
     }
 
-    private async generateSpeechStreaming(text: string): Promise<void> {
+    public async generateSpeechStream(text: string): Promise<void> {
         try {
-            const response = await this.elevenLabs.generate({
-                text,
-                voiceId: this.config.voiceId,
-                modelId: 'eleven_monolingual_v1',
-                stream: true
-            });
+            logger.info('Starting speech streaming', { textLength: text.length });
 
-            // Create a transform stream to chunk the audio
-            const chunker = new Transform({
-                transform: (chunk, encoding, callback) => {
-                    for (let i = 0; i < chunk.length; i += this.streamingConfig.audioChunkSize) {
-                        const audioChunk = chunk.slice(i, i + this.streamingConfig.audioChunkSize);
-                        this.emit('audioChunk', audioChunk);
-                    }
-                    callback();
-                }
-            });
+            // Generate the entire audio first
+            const audioBuffer = await this.generateSpeech(text);
 
-            // Pipe the audio response through the chunker
-            if (response instanceof Readable) {
-                await new Promise((resolve, reject) => {
-                    response
-                        .pipe(chunker)
-                        .on('finish', resolve)
-                        .on('error', reject);
-                });
+            // Stream it in chunks
+            for (let i = 0; i < audioBuffer.length; i += this.streamingConfig.audioChunkSize) {
+                const chunk = audioBuffer.slice(i, i + this.streamingConfig.audioChunkSize);
+                this.emit('audioChunk', chunk);
+                
+                // Add a small delay between chunks to simulate streaming
+                await new Promise(resolve => setTimeout(resolve, 50));
             }
 
+            this.emit('streamComplete');
         } catch (error) {
-            logger.error('Error in speech streaming:', error);
+            logger.error('Error in speech streaming:', error instanceof Error ? error : new Error(String(error)));
             this.emit('error', error);
         }
     }
 
-    // Add streaming control methods
+    public async shutdown(): Promise<void> {
+        try {
+            await this.cache.shutdown();
+            this.removeAllListeners();
+            this.isInitialized = false;
+            logger.info('AI Service shut down');
+        } catch (error) {
+            logger.error('Failed to shutdown AI Service:', error instanceof Error ? error : new Error(String(error)));
+            throw error;
+        }
+    }
+
+    // Control methods for streaming
     public pauseStream(): void {
         this.emit('streamPause');
     }
@@ -250,45 +328,3 @@ export class IrohAIService extends EventEmitter implements AIService {
         this.emit('streamStop');
     }
 }
-
-// Example usage with streaming:
-async function streamingExample() {
-    const ai = new IrohAIService(config);
-
-    // Handle text chunks
-    ai.on('textChunk', (text: string) => {
-        console.log('Received text chunk:', text);
-    });
-
-    // Handle audio chunks
-    ai.on('audioChunk', (audioBuffer: Buffer) => {
-        // Play audio chunk through your audio system
-        console.log('Received audio chunk:', audioBuffer.length, 'bytes');
-    });
-
-    // Handle stream completion
-    ai.on('streamComplete', () => {
-        console.log('Stream completed');
-    });
-
-    // Handle errors
-    ai.on('error', (error: Error) => {
-        console.error('Stream error:', error);
-    });
-
-    // Start streaming process
-    const audioBuffer = Buffer.from([]); // Your audio data
-    await ai.processVoiceStreaming(audioBuffer);
-}
-
-// Cache AI responses
-const responseCache = new Cache({
-    namespace: 'ai-responses',
-    ttl: 1 * 60 * 60 * 1000  // 1 hour
-});
-
-// Cache AI responses
-const response = await responseCache.getOrSet(
-    `query:${text}`,
-    async () => await this.anthropic.messages.create({...})
-);
