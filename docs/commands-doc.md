@@ -1,155 +1,213 @@
-# Command Reference
+# Iroh Command Reference Guide
 
-## Phone Commands
+This document provides a comprehensive guide to Iroh's command system, covering both DTMF (touch-tone) commands and voice commands. Each command is designed to feel natural and intuitive, whether using the telephone keypad or speaking directly.
 
-### Single Digit Commands
+## Command Philosophy
 
-| Digit | Command | Description |
-|-------|---------|-------------|
-| 1 | Toggle Main Lights | Toggles the main room lights |
-| 2 | Music Control | Start/Stop music playback |
-| 3 | Weather Report | Get current weather information |
-| 4 | Volume Up | Increase audio volume |
-| 5 | Volume Down | Decrease audio volume |
-| 6 | Next Track | Skip to next music track |
-| 7 | Previous Track | Go to previous track |
-| 8 | Status Report | Get system status update |
-| 9 | Help Menu | List available commands |
-| 0 | Cancel | Cancel current operation |
+Our command structure follows Uncle Iroh's principles of clarity and wisdom. Every command should be:
+- Simple to remember and execute
+- Forgiving of minor variations
+- Clear in its feedback
+- Safe to explore and experiment with
 
-### Special Commands
+## DTMF Commands
 
-| Sequence | Command | Description |
-|----------|---------|-------------|
-| *1 | All Lights Off | Turn off all lights |
-| *2 | Away Mode | Enable away mode |
-| *3 | Movie Mode | Set up movie scene |
-| *4 | Good Morning | Activate morning routine |
-| *5 | Good Night | Activate night routine |
-| #1 | Emergency Mode | Activate emergency lights |
-| #2 | Reset System | Reset all settings |
-| #3 | System Status | Detailed system report |
+DTMF commands use the telephone keypad for precise control. Commands generally follow this pattern:
+`*[category][action][parameter]#`
+
+The `*` indicates the start of a command, and `#` confirms execution.
+
+### Quick Reference
+
+#### Basic Controls
+- `*1` - Toggle all lights
+- `*10[1-9]` - Set light brightness (1-9 = 10%-90%, 0 = 100%)
+- `*11[room]` - Toggle lights in specific room
+- `*2` - Start/stop music
+- `*20[1-9]` - Set volume level
+- `*21` - Next track
+- `*22` - Previous track
+- `*3[temp]#` - Set temperature (e.g. *372# = 72°F)
+- `*4` - Start morning routine
+- `*5` - Start evening routine
+
+#### Information
+- `*61` - Weather report
+- `*62` - Time and date
+- `*63` - System status
+- `*64` - Last command history
+
+#### Timer Control
+- `*7[minutes]#` - Set timer (e.g. *715# = 15 minute timer)
+- `*70` - Cancel current timer
+- `*71` - Check timer status
+
+#### System Control
+- `*90` - Help menu (spoken guide to commands)
+- `*91` - Repeat last response
+- `*99` - System reset
+
+### Extended Command Details
+
+1. Light Control Commands
+   ```
+   *1         - Toggle all lights
+   *10[level] - Set main lights brightness
+   *11[room]  - Toggle room lights where:
+                1 = Living Room
+                2 = Kitchen
+                3 = Bedroom
+                4 = Office
+   *12[room][level] - Set room brightness
+   ```
+
+2. Music Control Commands
+   ```
+   *2        - Play/pause music
+   *20[level] - Set volume (0-9)
+   *21       - Next track
+   *22       - Previous track
+   *23[genre] - Play genre where:
+                1 = Jazz
+                2 = Classical
+                3 = Rock
+                4 = Electronic
+   ```
 
 ## Voice Commands
 
-### Music Control
-```
-"Play [artist/song/playlist]"
-"Pause music"
-"Next song"
-"Previous song"
-"Volume up/down"
-"Shuffle playlist"
-```
+Voice commands are designed to feel like natural conversation. The system understands various phrasings and can extract intent from casual speech.
 
-### Home Control
-```
-"Turn on/off [device]"
-"Set [device] to [state]"
-"Activate [scene]"
-"Set temperature to [value]"
-```
+### Basic Command Structure
 
-### Information
-```
-"What's the weather?"
-"How are my devices?"
-"System status"
-"List commands"
-```
+Most voice commands follow this natural pattern:
+`[Action] [Target] [Parameter]`
 
-## Command Modifiers
+Examples:
+- "Turn on the living room lights"
+- "Set the temperature to 72 degrees"
+- "Play some jazz music"
 
-### Duration Modifiers
-- "for 10 minutes"
-- "until sunset"
-- "for one hour"
+### Command Categories
 
-### Location Modifiers
-- "in the living room"
-- "upstairs"
-- "everywhere"
+1. Lighting Control
+   ```
+   "Turn on/off the lights"
+   "Dim the lights to 50 percent"
+   "Make the kitchen brighter"
+   "Set living room lights to cozy"
+   ```
 
-### State Modifiers
-- "to 50 percent"
-- "to warm white"
-- "to blue"
+2. Climate Control
+   ```
+   "Set temperature to 72 degrees"
+   "Make it a bit warmer"
+   "Turn on the fan"
+   "What's the current temperature?"
+   ```
 
-## Response Feedback
+3. Music Control
+   ```
+   "Play some relaxing music"
+   "Skip this song"
+   "Turn up the volume"
+   "What's playing right now?"
+   ```
 
-### Audio Feedback
-- Single beep: Command acknowledged
-- Double beep: Command completed
-- Triple beep: Error
-- Long tone: System busy
+4. Information Queries
+   ```
+   "What's the weather like?"
+   "What time is it?"
+   "How much longer on the timer?"
+   "What's on my calendar today?"
+   ```
 
-### Voice Feedback
-- Command confirmation
-- Error explanation
-- Status updates
-- Help information
+5. Scene Control
+   ```
+   "Start morning routine"
+   "Set up movie mode"
+   "Good night" (triggers evening routine)
+   "I'm home" (triggers welcome scene)
+   ```
 
-## Error Recovery
+## Command Feedback
 
-### Common Issues
-1. Unrecognized command
-   - System will ask for clarification
-   - Suggest similar commands
+The system provides feedback through:
+1. Success/Acknowledgment Tones
+   - Short high tone: Command accepted
+   - Double tone: Command completed
+   - Low tone: Command error
 
-2. Hardware errors
-   - System will provide diagnostic info
-   - Suggest troubleshooting steps
+2. Voice Responses
+   - Confirms command understanding
+   - Provides status updates
+   - Offers suggestions when commands are unclear
+   - Asks for clarification when needed
 
-3. Service unavailable
-   - System will explain the issue
-   - Provide alternative options
+3. Error Handling
+   - Clear explanation of what went wrong
+   - Suggestions for correct command usage
+   - Option to retry or modify command
 
-### Recovery Commands
-```
-"Cancel" - Stop current operation
-"Help" - Get assistance
-"Repeat" - Repeat last action
-"Status" - Check system state
-```
+## Safety and Security
 
-## Advanced Features
+1. Protected Commands
+   Some commands require confirmation to execute:
+   ```
+   - System reset (*99)
+   - All device power off
+   - Temperature changes > 5 degrees
+   ```
 
-### Command Chaining
-- "Turn on lights and play music"
-- "Set movie mode and dim lights"
+2. Command Timeouts
+   - DTMF commands must complete within 5 seconds
+   - Voice commands have a 10-second listening window
+   - System will prompt for continuation on timeout
 
-### Conditional Commands
-- "If motion detected then turn on lights"
-- "When temperature above 75 then start fan"
+3. Command Limits
+   - Maximum 3 failed attempts before temporary lockout
+   - Rate limiting on rapid command sequences
+   - Automatic safety checks on environmental controls
 
-### Scheduled Commands
-- "Turn off lights in 30 minutes"
-- "Start music at 8 AM"
+## Developer Notes
 
-## Safety Features
+When implementing command handlers:
+1. Always validate input ranges
+2. Provide immediate feedback
+3. Log all command attempts
+4. Implement graceful failure modes
+5. Consider command queueing for complex operations
 
-### Emergency Override
-- "#1" immediately activates emergency mode
-- Voice command "Emergency" does the same
-
-### System Protection
-- Confirmation required for critical commands
-- Automatic timeout for potentially dangerous states
-
-## Adding Custom Commands
-
-### DTMF Commands
+Example command handler structure:
 ```typescript
-phoneController.addCommand({
-    sequence: '42',
-    description: 'Custom action',
-    handler: async () => {
-        // Implementation
-    }
-});
+interface CommandHandler {
+  validate(): boolean;
+  execute(): Promise<void>;
+  provideFeedback(): Promise<void>;
+  handleError(error: Error): Promise<void>;
+}
 ```
 
-### Voice Commands
-```typescript
-aiService.addCommand({
-    trigger: 'custom action',
+## Customization
+
+The command system can be extended through:
+1. Custom DTMF sequences
+2. Voice command aliases
+3. Scene definitions
+4. Routine configurations
+5. Room and device mappings
+
+Configuration is stored in `commands.yaml`:
+```yaml
+commands:
+  dtmf:
+    custom_sequences:
+      # Add custom DTMF commands
+  voice:
+    aliases:
+      # Add alternative voice command phrases
+  rooms:
+    # Define room mappings
+  scenes:
+    # Configure scene definitions
+```

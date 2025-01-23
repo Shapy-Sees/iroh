@@ -1,4 +1,12 @@
 // src/audio/types.ts
+//
+// Key Features:
+// - Audio input/output format definitions for DAHDI compatibility
+// - Event types for DTMF and voice detection
+// - Type definitions for audio processing pipeline
+// - Handler type definitions for event processing
+
+// Basic audio format definition for DAHDI-compatible audio
 export interface AudioInput {
     sampleRate: number;
     channels: number;
@@ -6,135 +14,146 @@ export interface AudioInput {
     data: Buffer;
 }
 
+// Event generated when DTMF tone is detected
 export interface DTMFEvent {
+    /** The detected DTMF digit (0-9, *, #) */
     digit: string;
+    
+    /** Duration of the tone in milliseconds */
     duration: number;
+    
+    /** Timestamp when the tone was detected */
     timestamp: number;
 }
 
+// Event generated when voice activity is detected
 export interface VoiceEvent {
+    /** The captured audio data */
     audio: Buffer;
+    
+    /** Start time of the voice segment (Unix timestamp) */
     startTime: number;
+    
+    /** End time of the voice segment (Unix timestamp) */
     endTime: number;
+    
+    /** Whether this is the final segment of the utterance */
     isFinal: boolean;
 }
 
+// Handler type for processing audio events
 export type AudioEventHandler = (event: DTMFEvent | VoiceEvent) => Promise<void>;
 
-// src/audio/pipeline.ts
-import { EventEmitter } from 'events';
-import { AudioInput, DTMFEvent, VoiceEvent, AudioEventHandler } from './types';
-import { DTMFDetector } from './dtmf-detector';
-import { VoiceDetector } from './voice-detector';
-import { logger } from '../utils/logger';
+// Audio format specification for DAHDI
+export interface DAHDIAudioFormat {
+    /** Sample rate must be 8000 Hz for DAHDI */
+    readonly sampleRate: 8000;
+    
+    /** DAHDI only supports mono audio */
+    readonly channels: 1;
+    
+    /** DAHDI uses 16-bit linear PCM */
+    readonly bitDepth: 16;
+    
+    /** Linear PCM format specifier */
+    readonly format: 'linear';
+}
 
-export class AudioPipeline extends EventEmitter {
-    private dtmfDetector: DTMFDetector;
-    private voiceDetector: VoiceDetector;
-    private isProcessing: boolean = false;
-    private handlers: Map<string, AudioEventHandler[]> = new Map();
+// Audio processing pipeline configuration
+export interface AudioPipelineConfig {
+    /** Frame size in samples */
+    frameSize: number;
+    
+    /** Whether to drop frames when pipeline is busy */
+    dropFramesWhenBusy?: boolean;
+    
+    /** Maximum processing time per frame (ms) */
+    maxProcessingTime?: number;
+    
+    /** Audio format configuration */
+    format: DAHDIAudioFormat;
+}
 
-    constructor() {
-        super();
-        this.dtmfDetector = new DTMFDetector();
-        this.voiceDetector = new VoiceDetector();
+// Voice detection configuration
+export interface VADConfig {
+    /** Energy threshold for voice detection */
+    threshold: number;
+    
+    /** Minimum speech duration (ms) */
+    minSpeechDuration: number;
+    
+    /** Maximum speech duration (ms) */
+    maxSpeechDuration: number;
+    
+    /** Silence duration to end speech (ms) */
+    silenceThreshold: number;
+}
 
-        // Setup internal event handlers
-        this.dtmfDetector.on('dtmf', this.handleDTMF.bind(this));
-        this.voiceDetector.on('voice', this.handleVoice.bind(this));
-    }
+// DTMF detection configuration
+export interface DTMFConfig {
+    /** Minimum duration for valid DTMF tone (ms) */
+    minDuration: number;
+    
+    /** Energy threshold for DTMF detection */
+    threshold: number;
+    
+    /** Frame size for DTMF analysis */
+    frameSize: number;
+}
 
-    public async processAudio(input: AudioInput): Promise<void> {
-        if (this.isProcessing) {
-            logger.warn('Audio pipeline is busy, dropping frame');
-            return;
-        }
+// Audio buffer statistics for monitoring
+export interface AudioStats {
+    /** Number of frames processed */
+    framesProcessed: number;
+    
+    /** Number of frames dropped */
+    framesDropped: number;
+    
+    /** Average processing time per frame (ms) */
+    averageProcessingTime: number;
+    
+    /** Maximum processing time observed (ms) */
+    maxProcessingTime: number;
+    
+    /** Number of overruns (when processing took too long) */
+    overruns: number;
+}
 
-        try {
-            this.isProcessing = true;
-
-            // Process for DTMF tones
-            const dtmfResult = await this.dtmfDetector.analyze(input);
-            if (dtmfResult) {
-                await this.handleDTMF(dtmfResult);
-                return; // Don't process voice if DTMF detected
-            }
-
-            // Process for voice
-            const voiceResult = await this.voiceDetector.analyze(input);
-            if (voiceResult) {
-                await this.handleVoice(voiceResult);
-            }
-
-        } catch (error) {
-            logger.error('Error processing audio:', error);
-            this.emit('error', error);
-        } finally {
-            this.isProcessing = false;
-        }
-    }
-
-    public addHandler(eventType: 'dtmf' | 'voice', handler: AudioEventHandler): void {
-        const handlers = this.handlers.get(eventType) || [];
-        handlers.push(handler);
-        this.handlers.set(eventType, handlers);
-    }
-
-    private async handleDTMF(event: DTMFEvent): Promise<void> {
-        const handlers = this.handlers.get('dtmf') || [];
-        try {
-            await Promise.all(handlers.map(handler => handler(event)));
-            this.emit('dtmf', event);
-        } catch (error) {
-            logger.error('Error handling DTMF event:', error);
-            this.emit('error', error);
-        }
-    }
-
-    private async handleVoice(event: VoiceEvent): Promise<void> {
-        const handlers = this.handlers.get('voice') || [];
-        try {
-            await Promise.all(handlers.map(handler => handler(event)));
-            this.emit('voice', event);
-        } catch (error) {
-            logger.error('Error handling voice event:', error);
-            this.emit('error', error);
-        }
-    }
-
-    public shutdown(): void {
-        this.dtmfDetector.shutdown();
-        this.voiceDetector.shutdown();
-        this.removeAllListeners();
-        this.handlers.clear();
+// Audio processing errors
+export class AudioProcessingError extends Error {
+    constructor(
+        message: string,
+        public readonly code: string,
+        public readonly details?: any
+    ) {
+        super(message);
+        this.name = 'AudioProcessingError';
     }
 }
 
-// Example usage:
-import { AudioPipeline } from './audio/pipeline';
+// Common error codes for audio processing
+export enum AudioErrorCode {
+    BUFFER_OVERFLOW = 'BUFFER_OVERFLOW',
+    PROCESSING_TIMEOUT = 'PROCESSING_TIMEOUT',
+    INVALID_FORMAT = 'INVALID_FORMAT',
+    HARDWARE_ERROR = 'HARDWARE_ERROR',
+    INITIALIZATION_ERROR = 'INITIALIZATION_ERROR'
+}
 
-async function setupAudioPipeline() {
-    const pipeline = new AudioPipeline();
-
-    // Add DTMF handler
-    pipeline.addHandler('dtmf', async (event) => {
-        const dtmfEvent = event as DTMFEvent;
-        console.log(`DTMF digit detected: ${dtmfEvent.digit}`);
-    });
-
-    // Add voice handler
-    pipeline.addHandler('voice', async (event) => {
-        const voiceEvent = event as VoiceEvent;
-        console.log(`Voice detected: ${voiceEvent.startTime} - ${voiceEvent.endTime}`);
-    });
-
-    // Process incoming audio
-    const audioInput: AudioInput = {
-        sampleRate: 8000,
-        channels: 1,
-        bitDepth: 16,
-        data: Buffer.from([/* audio data */])
-    };
-
-    await pipeline.processAudio(audioInput);
+// Audio device capabilities from DAHDI
+export interface AudioDeviceCapabilities {
+    /** Supported sample rates */
+    supportedSampleRates: number[];
+    
+    /** Supported bit depths */
+    supportedBitDepths: number[];
+    
+    /** Whether device supports hardware DTMF detection */
+    hardwareDTMF: boolean;
+    
+    /** Whether device supports echo cancellation */
+    echoCancellation: boolean;
+    
+    /** Maximum number of channels */
+    maxChannels: number;
 }

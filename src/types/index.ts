@@ -52,12 +52,6 @@ export interface MusicService {
 }
 
 
-export interface HomeService {
-    executeCommand(command: string): Promise<void>;
-    getStatus(): Promise<HomeStatus>;
-    getDeviceState(deviceId: string): Promise<DeviceState>;
-    setDeviceState(deviceId: string, state: DeviceState): Promise<void>;
-}
 
 // Status Types
 export interface MusicStatus {
@@ -71,25 +65,9 @@ export interface MusicStatus {
     queue: number;
 }
 
-export interface HomeStatus {
-    devices: DeviceState[];
-    scenes: SceneState[];
-}
 
-export interface DeviceState {
-    id: string;
-    name: string;
-    type: string;
-    state: any;
-    batteryLevel?: number;
-    reachable: boolean;
-}
 
-export interface SceneState {
-    id: string;
-    name: string;
-    active: boolean;
-}
+
 
 // Configuration Types
 export interface Config {
@@ -97,7 +75,6 @@ export interface Config {
     audio: AudioConfig;
     ai: AIConfig;
     music: MusicConfig;
-    home: HomeConfig;
     logging: LogConfig;
 }
 
@@ -131,13 +108,6 @@ export interface MusicConfig {
     sonosClientId?: string;
 }
 
-export interface HomeConfig {
-    homekitBridge: {
-        pin: string;
-        name: string;
-        port: number;
-    };
-}
 
 export interface LogConfig {
     level: 'debug' | 'info' | 'warn' | 'error';

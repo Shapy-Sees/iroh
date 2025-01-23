@@ -35,13 +35,6 @@ const ConfigSchema = z.object({
         temperature: z.number().default(0.7),
         voiceId: z.string().default('uncle-iroh'),
     }),
-    home: z.object({
-        homekitBridge: z.object({
-            pin: z.string().default('031-45-154'),
-            name: z.string().default('Iroh Bridge'),
-            port: z.number().default(47128),
-        }),
-    }),
     timer: z.object({
         devicePath: z.string().default('/dev/ttyUSB1'),
         baudRate: z.number().default(9600),

@@ -1,124 +1,265 @@
-# Hardware Setup Guide
+# Iroh Hardware Setup Guide
 
-## Required Components
+This guide explains how to set up and configure the hardware components needed for the Iroh vintage telephone integration system. We will cover everything from selecting compatible hardware to testing the final configuration.
 
-1. Telephone
-   - Any touch-tone phone
-   - Rotary phones require additional pulse-to-tone conversion
+## Required Hardware Components
 
-2. FXS Module
-   - Recommended: Sipura SPA-3000
-   - Alternatives: Grandstream HT502, Cisco SPA112
+To build an Iroh system, you will need several key components that work together to bridge the gap between vintage telephony and modern smart home technology.
 
-3. Raspberry Pi
-   - Model 4B (recommended)
-   - Minimum 2GB RAM
-   - 32GB+ SD card
+### Core Components
 
-4. Additional Components
-   - 5V 3A power supply for Raspberry Pi
-   - Ethernet cable or WiFi connection
-   - RJ11 cable for phone connection
-   - USB audio adapter (if needed)
+1. OpenVox A400P FXS Card
+   The A400P is a PCI-based telephony interface card that provides Foreign Exchange Station (FXS) ports. FXS ports supply the necessary voltage and signals that make analog telephones work. When selecting your A400P, consider these specifications:
+   - 4 FXS ports per card
+   - PCI 2.2 compliant
+   - 3.3V or 5V signaling support
+   - Hardware echo cancellation
+   - Maximum power consumption: 15W
+   
+2. Vintage Telephone
+   Most analog telephones will work with the system. The telephone should have:
+   - Working rotary dial or DTMF keypad
+   - Functional hook switch
+   - Standard RJ11 connector or adaptable wiring
+   - Minimum impedance of 600Ω
+   
+3. Linux-Compatible Computer
+   The host system needs these minimum specifications:
+   - CPU: Dual-core 2GHz or better
+   - RAM: 4GB minimum (8GB recommended)
+   - Storage: 32GB minimum for OS and software
+   - PCI slot for A400P card
+   - Ubuntu 20.04 LTS or newer recommended
 
-## Wiring Diagram
+### Additional Components
 
-```
-[Vintage Phone] <--RJ11--> [FXS Module] <--USB--> [Raspberry Pi]
-                                                      |
-[Sonos Speaker] <----------------WiFi---------------->|
-```
+1. RJ11 Telephone Cable
+   - High-quality shielded cable recommended
+   - Maximum length: 100 meters
+   - CAT3 or better specification
 
-## Step-by-Step Setup
+2. Power Supply
+   Ensure your computer's power supply can handle the additional load from the A400P card:
+   - Minimum 400W PSU recommended
+   - Clean 12V rail for telephony card
+   - UPS backup recommended
 
-1. Prepare the Raspberry Pi
+## Hardware Installation
+
+Let's go through the physical installation process step by step.
+
+### Preparing Your System
+
+1. Power Down and Safety
+   Always begin with a fully powered-down system and take proper ESD precautions:
    ```bash
-   # Flash Raspberry Pi OS (64-bit recommended)
-   # Enable SSH and WiFi during setup
+   sudo shutdown -h now
+   # Wait for full shutdown
+   # Unplug system from wall
+   # Use anti-static wrist strap
    ```
 
-2. Configure FXS Module
-   - Connect to power
-   - Access web interface (default: 192.168.0.1)
-   - Configure SIP settings:
-     ```
-     Line Enable: Yes
-     SIP Port: 5060
-     Registration: No (local use only)
-     ```
+2. Case Preparation
+   You'll need good access to:
+   - PCI slot
+   - Power connections
+   - Front panel audio headers (if using internal audio)
 
-3. Phone Connection
-   - Connect phone to FXS port using RJ11 cable
-   - Test dial tone
-   - Verify DTMF detection
+### Installing the A400P Card
 
-4. Raspberry Pi Connection
-   - Connect FXS module to Raspberry Pi via USB
-   - Verify device recognition:
-     ```bash
-     lsusb
-     dmesg | grep ttyUSB
-     ```
+1. Physical Installation
+   - Remove the case cover
+   - Identify an available PCI slot
+   - Remove the slot cover
+   - Insert the A400P card firmly and evenly
+   - Secure the bracket
+   - Double-check all connections
 
-5. Audio Setup
-   - Test audio input/output
-   - Configure levels and gain
-   - Verify echo cancellation
+2. Jumper Configuration
+   The A400P requires specific jumper settings for FXS operation:
+   ```
+   JP1: Pins 1-2 (FXS mode)
+   JP2: Open (Normal operation)
+   JP3: Pins 2-3 (PCI clock source)
+   ```
 
-## Testing
+### Telephone Connection
 
-1. Basic Connectivity
-```bash
-# Check FXS module connection
-ls /dev/ttyUSB*
+1. Wiring Preparation
+   Standard RJ11 pinout for FXS connection:
+   ```
+   Pin 1: Not used
+   Pin 2: Not used
+   Pin 3: Ring (Green)
+   Pin 4: Tip (Red)
+   Pin 5: Not used
+   Pin 6: Not used
+   ```
 
-# Test audio device
-arecord -l
-aplay -l
-```
+2. Testing Connections
+   Before full assembly:
+   - Check continuity of telephone line
+   - Verify polarity is correct
+   - Ensure proper grounding
 
-2. Phone Operation
-   - Verify dial tone when off hook
-   - Test DTMF tones (press keys 1-9)
-   - Check audio quality
+## Software Configuration
+
+After physical installation, the system needs proper software configuration.
+
+### DAHDI Driver Installation
+
+1. Install Required Packages
+   ```bash
+   sudo apt update
+   sudo apt install -y build-essential linux-headers-$(uname -r) \
+                      dahdi dahdi-linux dahdi-tools
+   ```
+
+2. Configure DAHDI
+   Create `/etc/dahdi/system.conf`:
+   ```conf
+   # Basic FXS configuration
+   span=1,1,0,sw,fxs_ls
+   fxs0=1
+   loadzone = us
+   defaultzone = us
+   echocanceller = mg2,1
+   ```
+
+3. Generate Configuration
+   ```bash
+   sudo dahdi_genconf
+   sudo dahdi_cfg -vv
+   ```
+
+### Testing the Installation
+
+1. Verify Card Detection
+   ```bash
+   sudo dahdi_hardware
+   # Should show OpenVox A400P
+   
+   sudo dahdi_scan
+   # Should list configured channels
+   ```
+
+2. Basic Line Test
+   ```bash
+   sudo dahdi_test 1
+   # Tests channel 1 for proper operation
+   ```
+
+3. Audio Testing
+   Simple audio loopback test:
+   ```bash
+   sudo dahdi_monitor 1 -v
+   # Monitor channel 1 audio
+   ```
 
 ## Troubleshooting
 
-1. No Dial Tone
-   - Check FXS power
-   - Verify RJ11 connection
-   - Check FXS configuration
+Let's look at common issues and their solutions.
 
-2. No DTMF Detection
-   - Verify USB connection
-   - Check audio levels
-   - Test with different DTMF frequencies
+### No Dial Tone
 
-3. Audio Issues
-   - Adjust gain settings
-   - Check for ground loops
-   - Verify sample rate settings
+1. Check Physical Connections
+   - Verify card seating in PCI slot
+   - Check RJ11 cable connections
+   - Confirm telephone hook switch operation
 
-## Hardware Specifications
+2. Verify Power
+   ```bash
+   sudo dahdi_hardware -v
+   # Check for voltage readings
+   ```
 
-1. Power Requirements
-   - FXS Module: 12V DC, 1A
-   - Raspberry Pi: 5V DC, 3A
-   - Total power draw: ~15W
+3. Test Line Voltage
+   ```bash
+   sudo dahdi_test -v 1
+   # Should show ~48V DC
+   ```
 
-2. Audio Specifications
-   - Sample Rate: 8kHz
-   - Bit Depth: 16-bit
-   - Channels: Mono
+### Audio Quality Issues
 
-3. Network Requirements
-   - Ethernet or WiFi connection
-   - Minimum 1Mbps upload/download
-   - Stable local network for HomeKit
+1. Check Echo Cancellation
+   ```bash
+   sudo dahdi_cfg -v
+   # Verify echo canceller loading
+   ```
 
-## Safety Notes
+2. Monitor Line Quality
+   ```bash
+   sudo dahdi_monitor 1 -m
+   # Shows audio levels and quality metrics
+   ```
 
-- Keep power supplies separated
-- Ensure proper grounding
-- Maintain ventilation
-- Protect from moisture
+### System Integration Testing
+
+Once basic functionality is confirmed, test the complete system:
+
+1. Hook State Detection
+   ```bash
+   # Using our test utility
+   sudo iroh-test hook 1
+   # Should show hook state changes
+   ```
+
+2. DTMF Recognition
+   ```bash
+   # Test DTMF detection
+   sudo iroh-test dtmf 1
+   # Press keys to verify detection
+   ```
+
+3. Voice Quality
+   ```bash
+   # Record and playback test
+   sudo iroh-test audio 1
+   # Should provide clear audio
+   ```
+
+## Maintenance and Monitoring
+
+Regular maintenance helps ensure reliable operation:
+
+1. System Logs
+   Check logs regularly for issues:
+   ```bash
+   sudo tail -f /var/log/dahdi
+   sudo tail -f /var/log/iroh/hardware.log
+   ```
+
+2. Performance Monitoring
+   Monitor system resource usage:
+   ```bash
+   top -p $(pgrep -d',' dahdi)
+   ```
+
+3. Backup Configuration
+   Keep backups of working configurations:
+   ```bash
+   sudo cp /etc/dahdi/system.conf /etc/dahdi/system.conf.backup
+   ```
+
+Remember to maintain proper documentation of any changes or customizations made to your installation. This will help with troubleshooting and future upgrades.
+
+## Safety Considerations
+
+Please keep these important safety points in mind:
+
+1. High Voltage Present
+   - FXS ports carry ~48V DC
+   - Ring voltage can reach ~90V AC
+   - Always disconnect power before servicing
+
+2. Proper Grounding
+   - Ensure chassis is properly grounded
+   - Use grounded power outlets
+   - Consider dedicated circuit for clean power
+
+3. Lightning Protection
+   - Install telephone line surge protectors
+   - Use UPS for power protection
+   - Consider optical isolation for long runs
+
+By following this guide carefully and maintaining proper safety procedures, you'll have a reliable hardware foundation for your Iroh system.
