@@ -4,6 +4,17 @@ This guide covers the implementation details for integrating the OpenVox A400P F
 
 ## Hardware Setup
 
+Before running the containers, verify that DAHDI is loaded on the host:
+```bash
+sudo modprobe dahdi
+sudo dahdi_cfg -vv
+```
+
+You may also need to adjust permissions on the DAHDI devices:
+```bash
+sudo chmod 666 /dev/dahdi/*
+```
+
 ### OpenVox A400P Configuration
 
 The A400P card must be configured in FXS mode to provide the necessary line voltage and signaling for analog telephones. Key configuration points:

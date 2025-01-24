@@ -1,3 +1,5 @@
+# docker-compose.yml
+
 version: '3.8'
 
 services:
@@ -8,23 +10,36 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
+      - /dev/dahdi:/dev/dahdi    # Mount DAHDI device directory
     ports:
       - "3000:3000"
     devices:
-      - "/dev/gpiomem:/dev/gpiomem"
-      - "/dev/mem:/dev/mem"
-    privileged: true
+      - "/dev/dahdi/channel001:/dev/dahdi/channel001"  # Map specific DAHDI channel
+      - "/dev/dahdi/ctl:/dev/dahdi/ctl"                # Map DAHDI control device
+    cap_add:
+      - SYS_RAWIO     # Required for direct hardware access
+      - SYS_NICE      # For real-time priority
+    privileged: true  # Required for hardware access
     environment:
       - NODE_ENV=development
+      - DAHDI_DEVICE=/dev/dahdi/channel001
     command: sh -c "npm install && npm run dev"
     tty: true
 
   devtools:
     build: 
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     volumes:
       - .:/app
       - /app/node_modules
+      - /dev/dahdi:/dev/dahdi    # Mount DAHDI device directory
+    devices:
+      - "/dev/dahdi/channel001:/dev/dahdi/channel001"
+      - "/dev/dahdi/ctl:/dev/dahdi/ctl"
+    cap_add:
+      - SYS_RAWIO
+      - SYS_NICE
+    privileged: true
     command: /bin/sh
     tty: true
