@@ -22,7 +22,6 @@ COPY package*.json ./
 
 # Install dependencies with Python path explicitly set
 RUN npm cache clean --force
-RUN npm install @serialport/stream
 RUN npm install --python=/usr/bin/python3
 
 COPY . .

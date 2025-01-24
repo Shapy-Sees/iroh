@@ -1,334 +1,97 @@
 // src/utils/logger.ts
 //
-// Enhanced logger implementation that provides both local file logging 
-// and external logging via HTTP Event Collector (HEC).
-// Includes comprehensive error handling, retry logic, and type safety.
+// Enhanced logging system that provides structured logging with type safety.
+// Supports multiple log levels, file rotation, and proper error handling.
 
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
-import axios, { AxiosInstance } from 'axios';
-import { EventEmitter } from 'events';
+import path from 'path';
 
-// Define strongly typed interfaces
-interface HECConfig {
-    url: string;
-    token: string;
-    batchSize: number;
-    batchTimeout: number;
-    maxRetries: number;
-    retryDelay: number;
-    index: string;
-    sourcetype: string;
-    source: string;
+// Define log level type for type safety
+type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+
+// Define error metadata interface
+interface ErrorMetadata {
+    error: Error;
+    context?: Record<string, any>;
 }
 
-interface LoggerConfig {
-    level: string;
-    logDir: string;
-    maxFiles: string;
-    maxSize: string;
-    console: boolean;
-    format: 'json' | 'simple';
-    hec?: Partial<HECConfig> | null;
-}
-
-const DEFAULT_HEC_CONFIG: HECConfig = {
-    url: '',
-    token: '',
-    batchSize: 100,
-    batchTimeout: 5000,
-    maxRetries: 3,
-    retryDelay: 1000,
-    index: 'iroh_logs',
-    sourcetype: 'iroh:app',
-    source: 'iroh_application'
-};
-
-class HECTransport extends EventEmitter {
-    private client: AxiosInstance;
-    private queue: any[] = [];
-    private timer: NodeJS.Timeout | null = null;
-    private isProcessing: boolean = false;
-    private retryCount: number = 0;
-
-    constructor(private config: HECConfig) {
-        super();
-        
-        this.client = axios.create({
-            baseURL: config.url,
-            headers: {
-                'Authorization': `Splunk ${config.token}`,
-                'Content-Type': 'application/json'
-            },
-            timeout: 5000
-        });
-
-        this.startTimer();
-    }
-
-    public startTimer(): void {
-        if (this.timer) {
-            clearInterval(this.timer);
-        }
-
-        this.timer = setInterval(() => {
-            if (this.queue.length > 0) {
-                this.processBatch().catch(error => {
-                    this.emit('error', error);
-                });
-            }
-        }, this.config.batchTimeout);
-    }
-
-    public async log(data: any): Promise<void> {
-        this.queue.push({
-            time: Date.now() / 1000,
-            index: this.config.index,
-            sourcetype: this.config.sourcetype,
-            source: this.config.source,
-            event: data
-        });
-
-        if (this.queue.length >= this.config.batchSize) {
-            await this.processBatch();
-        }
-    }
-
-    private async processBatch(): Promise<void> {
-        if (this.isProcessing || this.queue.length === 0) {
-            return;
-        }
-
-        this.isProcessing = true;
-        const batch = this.queue.splice(0, this.config.batchSize);
-
-        try {
-            await this.sendBatch(batch);
-            this.retryCount = 0;
-            this.emit('sent', batch.length);
-        } catch (error) {
-            await this.handleError(error, batch);
-        } finally {
-            this.isProcessing = false;
-        }
-    }
-
-    private async sendBatch(batch: any[]): Promise<void> {
-        try {
-            await this.client.post('/services/collector/event', {
-                events: batch
-            });
-        } catch (error) {
-            if (this.retryCount < this.config.maxRetries) {
-                this.retryCount++;
-                await new Promise(resolve => 
-                    setTimeout(resolve, this.config.retryDelay * this.retryCount)
-                );
-                throw error;
-            }
-            this.emit('error', error);
-            batch.forEach(event => {
-                this.emit('failed', event);
-            });
-        }
-    }
-
-    private async handleError(error: any, batch: any[]): Promise<void> {
-        console.error('HEC transport error:', error);
-        if (this.retryCount < this.config.maxRetries) {
-            this.queue.unshift(...batch);
-            this.emit('retry', {
-                count: this.retryCount,
-                events: batch.length
-            });
-        } else {
-            this.emit('drop', batch);
-        }
-    }
-
-    public shutdown(): void {
-        if (this.timer) {
-            clearInterval(this.timer);
-            this.timer = null;
-        }
-        
-        if (this.queue.length > 0) {
-            this.processBatch().catch(error => {
-                this.emit('error', error);
-            });
-        }
-    }
-}
-
-export class IrohLogger {
+class Logger {
     private logger: winston.Logger;
-    private config: LoggerConfig;
-    private hecTransport: HECTransport | null = null;
 
-    constructor(config?: Partial<LoggerConfig>) {
-        this.config = {
-            level: 'info',
-            logDir: 'logs',
-            maxFiles: '14d',
-            maxSize: '20m',
-            console: true,
-            format: 'json',
-            hec: null,
-            ...config
-        };
+    constructor() {
+        // Ensure logs directory exists
+        const logDir = path.join(process.cwd(), 'logs');
 
-        this.logger = this.initializeLogger();
-
-        if (this.config.hec) {
-            this.initializeHEC();
-        }
-    }
-
-    private initializeLogger(): winston.Logger {
-        const formats = {
-            json: winston.format.combine(
+        // Create Winston logger instance with proper configuration
+        this.logger = winston.createLogger({
+            level: process.env.LOG_LEVEL || 'info',
+            format: winston.format.combine(
                 winston.format.timestamp(),
                 winston.format.errors({ stack: true }),
                 winston.format.json()
             ),
-            simple: winston.format.combine(
-                winston.format.colorize(),
-                winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-                winston.format.printf(({ level, message, timestamp, ...metadata }) => {
-                    let msg = `${timestamp} [${level}]: ${message}`;
-                    if (Object.keys(metadata).length > 0) {
-                        msg += ` ${JSON.stringify(metadata)}`;
-                    }
-                    return msg;
+            transports: [
+                // Console transport for development
+                new winston.transports.Console({
+                    format: winston.format.combine(
+                        winston.format.colorize(),
+                        winston.format.simple()
+                    )
+                }),
+                // File transport with rotation
+                new DailyRotateFile({
+                    dirname: logDir,
+                    filename: 'iroh-%DATE%.log',
+                    datePattern: 'YYYY-MM-DD',
+                    maxSize: '20m',
+                    maxFiles: '14d',
+                    format: winston.format.combine(
+                        winston.format.timestamp(),
+                        winston.format.json()
+                    )
                 })
-            )
-        };
-
-        const fileTransport = new DailyRotateFile({
-            dirname: this.config.logDir,
-            filename: 'iroh-%DATE%.log',
-            datePattern: 'YYYY-MM-DD',
-            maxFiles: this.config.maxFiles,
-            maxSize: this.config.maxSize,
-            format: formats.json
+            ]
         });
+    }
 
-        const transports: winston.transport[] = [fileTransport];
-
-        if (this.config.console) {
-            transports.push(new winston.transports.Console({
-                format: formats.simple
-            }));
+    // Type-safe error logging
+    public error(message: string, error?: Error | unknown): void {
+        if (error instanceof Error) {
+            this.logger.error(message, {
+                error: {
+                    message: error.message,
+                    name: error.name,
+                    stack: error.stack
+                }
+            });
+        } else if (error !== undefined) {
+            this.logger.error(message, {
+                error: String(error)
+            });
+        } else {
+            this.logger.error(message);
         }
-
-        return winston.createLogger({
-            level: this.config.level,
-            transports,
-            exitOnError: false
-        });
     }
 
-    private initializeHEC(): void {
-        if (!this.config.hec) return;
-
-        const hecConfig: HECConfig = {
-            ...DEFAULT_HEC_CONFIG,
-            ...this.config.hec
-        };
-
-        if (!hecConfig.url || !hecConfig.token) {
-            this.logger.warn('HEC configuration missing required url or token - HEC transport disabled');
-            return;
-        }
-
-        this.hecTransport = new HECTransport(hecConfig);
-
-        this.hecTransport.on('error', (error) => {
-            this.logger.error('HEC transport error', { error });
-        });
-
-        this.hecTransport.on('retry', (info) => {
-            this.logger.warn('Retrying HEC batch', info);
-        });
-
-        this.hecTransport.on('drop', (batch) => {
-            this.logger.error('Dropped HEC batch', { size: batch.length });
-        });
-    }
-
-    public async debug(message: string, metadata: object = {}): Promise<void> {
-        this.logger.debug(message, metadata);
-        await this.sendToHEC('debug', message, metadata);
-    }
-
-    public async info(message: string, metadata: object = {}): Promise<void> {
-        this.logger.info(message, metadata);
-        await this.sendToHEC('info', message, metadata);
-    }
-
-    public async warn(message: string, metadata: object = {}): Promise<void> {
+    // Regular logging methods with proper typing
+    public warn(message: string, metadata?: Record<string, any>): void {
         this.logger.warn(message, metadata);
-        await this.sendToHEC('warn', message, metadata);
     }
 
-    public async error(message: string, error?: Error, metadata: object = {}): Promise<void> {
-        const errorMetadata = error ? {
-            error: {
-                message: error.message,
-                stack: error.stack,
-                name: error.name
-            },
-            ...metadata
-        } : metadata;
-
-        this.logger.error(message, errorMetadata);
-        await this.sendToHEC('error', message, errorMetadata);
+    public info(message: string, metadata?: Record<string, any>): void {
+        this.logger.info(message, metadata);
     }
 
-    private async sendToHEC(level: string, message: string, metadata: object): Promise<void> {
-        if (this.hecTransport) {
-            const logData = {
-                level,
-                message,
-                timestamp: new Date().toISOString(),
-                ...this.addMetadata(metadata)
-            };
-
-            await this.hecTransport.log(logData);
-        }
+    public debug(message: string, metadata?: Record<string, any>): void {
+        this.logger.debug(message, metadata);
     }
 
-    private addMetadata(metadata: object = {}): object {
-        return {
-            pid: process.pid,
-            hostname: require('os').hostname(),
-            environment: process.env.NODE_ENV,
-            version: process.env.npm_package_version,
-            ...metadata
-        };
-    }
-
-    public async shutdown(): Promise<void> {
-        if (this.hecTransport) {
-            this.hecTransport.shutdown();
-        }
-        
-        await new Promise<void>((resolve) => {
-            this.logger.on('finish', resolve);
-            this.logger.end();
-        });
+    // Set log level dynamically
+    public setLevel(level: LogLevel): void {
+        this.logger.level = level;
     }
 }
 
-// Create and export singleton instance with safe environment variable handling
-export const logger = new IrohLogger({
-    level: process.env.LOG_LEVEL || 'info',
-    logDir: process.env.LOG_DIR || 'logs',
-    console: process.env.NODE_ENV !== 'production',
-    hec: process.env.HEC_URL && process.env.HEC_TOKEN ? {
-        url: process.env.HEC_URL,
-        token: process.env.HEC_TOKEN,
-        index: process.env.HEC_INDEX || DEFAULT_HEC_CONFIG.index,
-        sourcetype: process.env.HEC_SOURCETYPE || DEFAULT_HEC_CONFIG.sourcetype
-    } : null
-});
+// Export singleton instance
+export const logger = new Logger();

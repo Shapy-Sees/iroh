@@ -1,22 +1,22 @@
 // src/hardware/fxs-interface.ts
 //
-// FXS (Foreign Exchange Station) interface implementation using DAHDI drivers.
-// Handles audio streaming, control signals, and phone state management.
-// Provides a high-level interface for phone controller to interact with FXS hardware.
+// FXS (Foreign Exchange Station) hardware interface implementation
+// Handles direct communication with DAHDI hardware for phone operations
 
 import { EventEmitter } from 'events';
-import { promises as fs } from 'fs';
+import * as fs from 'fs';
+import { FileHandle } from 'fs/promises';
+import { Readable, ReadableOptions } from 'stream';
 import { AudioInput } from '../types';
 import { logger } from '../utils/logger';
 
-// DAHDI device paths
-const DAHDI_DEVICE = '/dev/dahdi/channel001';
-const DAHDI_CTL = '/dev/dahdi/ctl';
-
-// DAHDI constants
-const DAHDI_HOOK = 0x40045408;  // Hook state ioctl
-const DAHDI_RING = 0x40045409;  // Ring control ioctl
-const DAHDI_AUDIO = 0x4004540A; // Audio control ioctl
+// DAHDI device constants and commands
+const DAHDI_COMMANDS = {
+    HOOK: 0x40045408,  // Hook state ioctl
+    RING: 0x40045409,  // Ring control ioctl
+    AUDIO: 0x4004540A, // Audio control ioctl
+    CONTROL: '/dev/dahdi/ctl'
+} as const;
 
 interface FXSConfig {
     devicePath?: string;
@@ -25,22 +25,33 @@ interface FXSConfig {
     bitDepth?: number;
 }
 
+
+
+
 export class FXSInterface extends EventEmitter {
-    private fd: number | null = null;
+    private fileHandle: FileHandle | null = null;
     private isActive: boolean = false;
     private readonly config: Required<FXSConfig>;
-    private audioStream: NodeJS.ReadStream | null = null;
+    private audioStream: DAHDIReadStream | null = null;
 
     constructor(config: FXSConfig) {
         super();
         
-        // Set default configuration values
-        this.config = {
-            devicePath: DAHDI_DEVICE,
-            sampleRate: config.sampleRate,
+        // Create configuration with defaults first
+        const defaultConfig: Required<FXSConfig> = {
+            devicePath: '/dev/dahdi/channel001',
             channels: 1,
             bitDepth: 16,
-            ...config
+            sampleRate: 8000
+        };
+
+        // Merge with provided config, being explicit about which properties to override
+        this.config = {
+            ...defaultConfig,
+            devicePath: config.devicePath || defaultConfig.devicePath,
+            sampleRate: config.sampleRate,
+            channels: config.channels || defaultConfig.channels,
+            bitDepth: config.bitDepth || defaultConfig.bitDepth
         };
 
         logger.debug('Initializing FXS interface', { config: this.config });
@@ -48,14 +59,14 @@ export class FXSInterface extends EventEmitter {
 
     public async start(): Promise<void> {
         try {
-            // Open DAHDI device
-            this.fd = await fs.open(this.config.devicePath, 'r+');
+            // Open DAHDI device with proper typing
+            this.fileHandle = await fs.promises.open(this.config.devicePath, 'r+');
             
             // Start monitoring hook state
-            this.startHookStateMonitoring();
+            await this.startHookStateMonitoring();
             
             // Start audio streaming
-            this.startAudioStreaming();
+            await this.startAudioStreaming();
             
             logger.info('FXS interface started successfully');
             this.emit('ready');
@@ -65,73 +76,58 @@ export class FXSInterface extends EventEmitter {
         }
     }
 
-    private async startHookStateMonitoring(): Promise<void> {
-        // Set up polling interval to check hook state
-        setInterval(async () => {
-            try {
-                const hookState = await this.getHookState();
-                if (hookState && !this.isActive) {
-                    // Phone went off hook
-                    this.isActive = true;
-                    this.emit('off_hook');
-                    logger.debug('Phone off hook detected');
-                } else if (!hookState && this.isActive) {
-                    // Phone went on hook
-                    this.isActive = false;
-                    this.emit('on_hook');
-                    logger.debug('Phone on hook detected');
+    private async startAudioStreaming(): Promise<void> {
+        if (!this.fileHandle) {
+            throw new Error('Device not open');
+        }
+
+        try {
+            // Calculate buffer size based on sample rate and frame duration
+            const frameSize = Math.floor(this.config.sampleRate * 0.02); // 20ms frames
+            
+            // Create custom read stream for DAHDI
+            this.audioStream = new DAHDIReadStream(this.fileHandle.fd, {
+                highWaterMark: frameSize * 2 // 16-bit samples
+            });
+
+            // Handle stream events
+            this.audioStream.on('data', (chunk: Buffer) => {
+                if (this.isActive) {
+                    const audioInput: AudioInput = {
+                        sampleRate: this.config.sampleRate,
+                        channels: this.config.channels,
+                        bitDepth: this.config.bitDepth,
+                        data: chunk
+                    };
+                    this.emit('audio', audioInput);
                 }
-            } catch (error) {
-                logger.error('Error checking hook state:', error);
-            }
-        }, 50); // Poll every 50ms
-    }
+            });
 
-    private async getHookState(): Promise<boolean> {
-        if (!this.fd) throw new Error('Device not open');
+            this.audioStream.on('error', (error) => {
+                logger.error('Audio stream error:', error);
+                this.emit('error', error);
+            });
 
-        // Read hook state using DAHDI ioctl
-        const buffer = Buffer.alloc(4);
-        await fs.read(this.fd, buffer, 0, 4, null);
-        return (buffer.readInt32LE(0) !== 0);
-    }
-
-    private startAudioStreaming(): void {
-        if (!this.fd) throw new Error('Device not open');
-
-        // Create read stream for audio input
-        this.audioStream = fs.createReadStream('', {
-            fd: this.fd,
-            highWaterMark: this.config.sampleRate * this.config.channels * 2 / 50 // 20ms chunks
-        });
-
-        this.audioStream.on('data', (chunk: Buffer) => {
-            if (this.isActive) {
-                const audioInput: AudioInput = {
-                    sampleRate: this.config.sampleRate,
-                    channels: this.config.channels,
-                    bitDepth: this.config.bitDepth,
-                    data: chunk
-                };
-                this.emit('audio', audioInput);
-            }
-        });
-
-        this.audioStream.on('error', (error) => {
-            logger.error('Audio stream error:', error);
-            this.emit('error', error);
-        });
+        } catch (error) {
+            logger.error('Failed to start audio streaming:', error);
+            throw error;
+        }
     }
 
     public async playAudio(buffer: Buffer): Promise<void> {
-        if (!this.fd || !this.isActive) {
+        if (!this.fileHandle || !this.isActive) {
             throw new Error('Cannot play audio - device not ready or inactive');
         }
 
         try {
-            // Write audio data to DAHDI device
-            await fs.write(this.fd, buffer);
-            logger.debug('Audio playback complete', { bytes: buffer.length });
+            // Write audio data with proper error handling
+            const { bytesWritten } = await this.fileHandle.write(buffer);
+            
+            if (bytesWritten !== buffer.length) {
+                throw new Error('Failed to write complete audio buffer');
+            }
+
+            logger.debug('Audio playback complete', { bytes: bytesWritten });
         } catch (error) {
             logger.error('Error playing audio:', error);
             throw error;
@@ -139,18 +135,21 @@ export class FXSInterface extends EventEmitter {
     }
 
     public async ring(duration: number = 2000): Promise<void> {
-        if (!this.fd) throw new Error('Device not open');
+        if (!this.fileHandle) {
+            throw new Error('Device not open');
+        }
 
         try {
-            // Send ring command using DAHDI ioctl
+            // Send ring command using proper buffer handling
             const buffer = Buffer.alloc(4);
             buffer.writeInt32LE(1, 0); // 1 = start ringing
-            await this.dahdiIoctl(DAHDI_RING, buffer);
+            
+            await this.dahdiIoctl(DAHDI_COMMANDS.RING, buffer);
 
             // Stop ringing after duration
             setTimeout(async () => {
                 buffer.writeInt32LE(0, 0); // 0 = stop ringing
-                await this.dahdiIoctl(DAHDI_RING, buffer);
+                await this.dahdiIoctl(DAHDI_COMMANDS.RING, buffer);
             }, duration);
 
             logger.debug('Ring signal sent', { duration });
@@ -161,23 +160,23 @@ export class FXSInterface extends EventEmitter {
     }
 
     private async dahdiIoctl(command: number, buffer: Buffer): Promise<void> {
-        // Helper function to send DAHDI ioctl commands
-        // Implementation would use Node.js native bindings to send actual ioctl
+        // Implementation would use Node.js native bindings for ioctl
+        // This is a placeholder that logs the command for now
         logger.debug('DAHDI ioctl', { command, buffer });
     }
 
     public async stop(): Promise<void> {
         try {
-            // Stop audio streaming
+            // Clean up audio stream
             if (this.audioStream) {
                 this.audioStream.destroy();
                 this.audioStream = null;
             }
 
             // Close DAHDI device
-            if (this.fd !== null) {
-                await fs.close(this.fd);
-                this.fd = null;
+            if (this.fileHandle) {
+                await this.fileHandle.close();
+                this.fileHandle = null;
             }
 
             this.isActive = false;
@@ -189,6 +188,6 @@ export class FXSInterface extends EventEmitter {
     }
 
     public isOpen(): boolean {
-        return this.fd !== null;
+        return this.fileHandle !== null;
     }
 }

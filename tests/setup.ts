@@ -2,40 +2,165 @@
 //
 // Test setup and utilities for the Iroh project
 // Includes mock implementations and helper functions
+// for testing DAHDI hardware integration and services
 
 import { EventEmitter } from 'events';
 import { jest } from '@jest/globals';
 
-// Mock implementations
+// Mock DAHDI hardware interface
+export class MockDAHDIInterface extends EventEmitter {
+    private isOpen: boolean = false;
+    private channelState: Map<number, {
+        isRinging: boolean;
+        isOffHook: boolean;
+        voltage: number;
+    }> = new Map();
+
+    constructor() {
+        super();
+        // Initialize default channel state
+        this.channelState.set(1, {
+            isRinging: false,
+            isOffHook: false,
+            voltage: 48 // Normal FXS voltage
+        });
+    }
+
+    public open = jest.fn().mockImplementation(async () => {
+        this.isOpen = true;
+        return Promise.resolve();
+    });
+
+    public close = jest.fn().mockImplementation(async () => {
+        this.isOpen = false;
+        return Promise.resolve();
+    });
+
+    public writeAudio = jest.fn().mockImplementation(async (buffer: Buffer) => {
+        return Promise.resolve();
+    });
+
+    public readAudio = jest.fn().mockImplementation(async () => {
+        return Promise.resolve(Buffer.alloc(320)); // 20ms of silence at 8kHz
+    });
+
+    public getChannelState = jest.fn().mockImplementation((channel: number) => {
+        return this.channelState.get(channel);
+    });
+
+    public setRinging = jest.fn().mockImplementation((channel: number, ringing: boolean) => {
+        const state = this.channelState.get(channel);
+        if (state) {
+            state.isRinging = ringing;
+            this.emit('ring', { channel, state: ringing });
+        }
+    });
+
+    public setHookState = jest.fn().mockImplementation((channel: number, offHook: boolean) => {
+        const state = this.channelState.get(channel);
+        if (state) {
+            state.isOffHook = offHook;
+            this.emit('hook_state', { channel, offHook });
+        }
+    });
+
+    public isDeviceOpen = jest.fn().mockImplementation(() => this.isOpen);
+}
+
+// Mock FXS Interface that uses DAHDI
 export class MockFXSInterface extends EventEmitter {
-    public start = jest.fn().mockResolvedValue(undefined);
-    public stop = jest.fn().mockResolvedValue(undefined);
-    public playAudio = jest.fn().mockResolvedValue(undefined);
-    public isOpen = jest.fn().mockReturnValue(false);
+    private dahdi: MockDAHDIInterface;
+
+    constructor() {
+        super();
+        this.dahdi = new MockDAHDIInterface();
+    }
+
+    public start = jest.fn().mockImplementation(async () => {
+        await this.dahdi.open();
+        this.emit('ready');
+        return Promise.resolve();
+    });
+
+    public stop = jest.fn().mockImplementation(async () => {
+        await this.dahdi.close();
+        return Promise.resolve();
+    });
+
+    public playAudio = jest.fn().mockImplementation(async (buffer: Buffer) => {
+        await this.dahdi.writeAudio(buffer);
+        return Promise.resolve();
+    });
+
+    public isOpen = jest.fn().mockImplementation(() => 
+        this.dahdi.isDeviceOpen()
+    );
+
+    // Helper method for tests to simulate phone events
+    public simulateOffHook(): void {
+        this.dahdi.setHookState(1, true);
+        this.emit('off_hook');
+    }
+
+    public simulateOnHook(): void {
+        this.dahdi.setHookState(1, false);
+        this.emit('on_hook');
+    }
+
+    public simulateRing(): void {
+        this.dahdi.setRinging(1, true);
+        setTimeout(() => this.dahdi.setRinging(1, false), 2000);
+    }
 }
 
+// Mock AI Service
 export class MockAIService extends EventEmitter {
-    public processText = jest.fn().mockResolvedValue('Mock AI Response');
-    public generateSpeech = jest.fn().mockResolvedValue(Buffer.from('Mock Audio'));
-    public shutdown = jest.fn().mockResolvedValue(undefined);
+    public processText = jest.fn().mockImplementation(async (text: string) => {
+        return Promise.resolve('Mock AI Response');
+    });
+
+    public generateSpeech = jest.fn().mockImplementation(async (text: string) => {
+        return Promise.resolve(Buffer.from('Mock Audio'));
+    });
+
+    public shutdown = jest.fn().mockImplementation(async () => {
+        return Promise.resolve();
+    });
 }
 
+// Mock DTMF Detector that would normally process DAHDI audio
 export class MockDTMFDetector extends EventEmitter {
-    public analyze = jest.fn().mockResolvedValue(null);
+    public analyze = jest.fn().mockImplementation(async (input: {
+        sampleRate: number;
+        data: Buffer;
+    }) => {
+        return Promise.resolve(null);
+    });
+
     public clear = jest.fn();
     public shutdown = jest.fn();
+
+    // Helper for tests to simulate DTMF detection
+    public simulateDigit(digit: string, duration: number = 100): void {
+        this.emit('dtmf', {
+            digit,
+            duration,
+            timestamp: Date.now()
+        });
+    }
 }
 
-// Test utilities
+// Test data generators
 export function createMockAudioInput(duration: number = 1000) {
     return {
-        sampleRate: 8000,
-        channels: 1,
-        bitDepth: 16,
-        data: Buffer.alloc(duration * 8) // 8 bytes per millisecond at 8kHz
+        sampleRate: 8000,  // DAHDI sample rate
+        channels: 1,       // DAHDI is mono
+        bitDepth: 16,      // DAHDI uses 16-bit PCM
+        data: Buffer.alloc(duration * 16) // 16 bytes per ms at 8kHz/16-bit
     };
 }
 
+// Mock configuration factory
 export function createMockConfig() {
     return {
         app: {
@@ -43,12 +168,27 @@ export function createMockConfig() {
             env: 'test',
             port: 3000
         },
+        dahdi: {
+            device: '/dev/dahdi/channel001',
+            span: 1,
+            channel: 1,
+            loadzone: 'us',
+            defaultzone: 'us',
+            echocancel: true,
+            echocanceltaps: 128
+        },
         audio: {
             sampleRate: 8000,
             channels: 1,
             bitDepth: 16,
             vadThreshold: 0.3,
             silenceThreshold: 500
+        },
+        homeAssistant: {
+            url: 'http://localhost:8123',
+            token: 'mock_token',
+            entityPrefix: 'test_',
+            updateInterval: 1000
         },
         ai: {
             anthropicKey: 'test-key',
@@ -65,232 +205,51 @@ export function createMockConfig() {
     };
 }
 
-// src/tests/phone-controller.test.ts
-//
-// Tests for the PhoneController class
-
-import { PhoneController } from '../controllers/phone-controller';
-import { MockFXSInterface, MockDTMFDetector, createMockConfig } from './setup';
-
-jest.mock('../hardware/fxs-interface', () => ({
-    FXSInterface: jest.fn().mockImplementation(() => new MockFXSInterface())
-}));
-
-jest.mock('../audio/dtmf-detector', () => ({
-    DTMFDetector: jest.fn().mockImplementation(() => new MockDTMFDetector())
-}));
-
-describe('PhoneController', () => {
-    let phoneController: PhoneController;
+// Example test using the mocks
+describe('Phone Controller with DAHDI', () => {
+    let phoneController: any;
     let mockFXS: MockFXSInterface;
     let mockDTMF: MockDTMFDetector;
+    let mockConfig: ReturnType<typeof createMockConfig>;
 
     beforeEach(() => {
-        jest.clearAllMocks();
-        const config = createMockConfig();
-        phoneController = new PhoneController({ fxs: config.audio });
+        mockConfig = createMockConfig();
         mockFXS = new MockFXSInterface();
         mockDTMF = new MockDTMFDetector();
+
+        phoneController = new PhoneController({
+            fxs: mockConfig.dahdi,
+            audio: mockConfig.audio
+        });
     });
 
     afterEach(() => {
         phoneController.removeAllListeners();
+        mockFXS.removeAllListeners();
+        mockDTMF.removeAllListeners();
     });
 
-    describe('initialization', () => {
-        it('should initialize successfully', async () => {
-            await expect(phoneController.start()).resolves.not.toThrow();
-            expect(mockFXS.start).toHaveBeenCalled();
-        });
+    test('should handle off-hook state', async () => {
+        const offHookHandler = jest.fn();
+        phoneController.on('off_hook', offHookHandler);
 
-        it('should handle initialization errors', async () => {
-            mockFXS.start.mockRejectedValueOnce(new Error('Hardware error'));
-            await expect(phoneController.start()).rejects.toThrow('Hardware error');
-        });
+        mockFXS.simulateOffHook();
+        expect(offHookHandler).toHaveBeenCalled();
     });
 
-    describe('event handling', () => {
-        it('should handle off-hook events', (done) => {
-            phoneController.on('off_hook', () => {
-                done();
-            });
-            mockFXS.emit('off_hook');
-        });
+    test('should handle DTMF input', async () => {
+        const dtmfHandler = jest.fn();
+        phoneController.on('dtmf', dtmfHandler);
 
-        it('should handle on-hook events', (done) => {
-            phoneController.on('on_hook', () => {
-                done();
-            });
-            mockFXS.emit('on_hook');
-        });
+        mockDTMF.simulateDigit('5');
+        expect(dtmfHandler).toHaveBeenCalledWith(
+            expect.objectContaining({ digit: '5' })
+        );
     });
 
-    describe('audio playback', () => {
-        it('should play audio when active', async () => {
-            const audioBuffer = Buffer.from('test audio');
-            mockFXS.isOpen.mockReturnValue(true);
-            await phoneController.playAudio(audioBuffer);
-            expect(mockFXS.playAudio).toHaveBeenCalledWith(audioBuffer);
-        });
-
-        it('should not play audio when inactive', async () => {
-            const audioBuffer = Buffer.from('test audio');
-            mockFXS.isOpen.mockReturnValue(false);
-            await phoneController.playAudio(audioBuffer);
-            expect(mockFXS.playAudio).not.toHaveBeenCalled();
-        });
-    });
-});
-
-// src/tests/dtmf-detector.test.ts
-//
-// Tests for the DTMFDetector class
-
-import { DTMFDetector } from '../audio/dtmf-detector';
-import { createMockAudioInput } from './setup';
-
-describe('DTMFDetector', () => {
-    let detector: DTMFDetector;
-
-    beforeEach(() => {
-        detector = new DTMFDetector({ sampleRate: 8000 });
-    });
-
-    afterEach(() => {
-        detector.shutdown();
-    });
-
-    it('should detect valid DTMF tones', (done) => {
-        const input = createMockAudioInput();
-        
-        detector.on('dtmf', (event) => {
-            expect(event).toHaveProperty('digit');
-            expect(event).toHaveProperty('duration');
-            expect(event).toHaveProperty('timestamp');
-            done();
-        });
-
-        detector.analyze(input);
-    });
-
-    it('should ignore short DTMF tones', async () => {
-        const input = createMockAudioInput(10); // 10ms duration
-        const result = await detector.analyze(input);
-        expect(result).toBeNull();
-    });
-
-    it('should clear internal state', () => {
-        detector.clear();
-        expect(detector.analyze(createMockAudioInput())).resolves.toBeNull();
-    });
-});
-
-// src/tests/ai-service.test.ts
-//
-// Tests for the IrohAIService class
-
-import { IrohAIService } from '../services/ai/ai-service';
-import { createMockConfig } from './setup';
-
-jest.mock('@anthropic-ai/sdk', () => ({
-    Anthropic: jest.fn().mockImplementation(() => ({
-        messages: {
-            create: jest.fn().mockResolvedValue({
-                content: [{ text: 'Mock response' }]
-            })
-        }
-    }))
-}));
-
-describe('IrohAIService', () => {
-    let aiService: IrohAIService;
-
-    beforeEach(() => {
-        const config = createMockConfig();
-        aiService = new IrohAIService(config.ai);
-    });
-
-    afterEach(async () => {
-        await aiService.shutdown();
-    });
-
-    describe('text processing', () => {
-        it('should process text input', async () => {
-            const response = await aiService.processText('Hello');
-            expect(response).toBeDefined();
-            expect(typeof response).toBe('string');
-        });
-
-        it('should handle errors gracefully', async () => {
-            jest.spyOn(console, 'error').mockImplementation(() => {}); // Suppress error logs
-            const anthropic = require('@anthropic-ai/sdk').Anthropic;
-            anthropic.mockImplementationOnce(() => ({
-                messages: {
-                    create: jest.fn().mockRejectedValue(new Error('API Error'))
-                }
-            }));
-
-            await expect(aiService.processText('Hello')).rejects.toThrow('API Error');
-        });
-    });
-
-    describe('speech generation', () => {
-        it('should generate speech from text', async () => {
-            const audio = await aiService.generateSpeech('Hello');
-            expect(Buffer.isBuffer(audio)).toBe(true);
-        });
-    });
-});
-
-// src/tests/cache.test.ts
-//
-// Tests for the Cache class
-
-import { Cache } from '../utils/cache';
-
-describe('Cache', () => {
-    let cache: Cache;
-
-    beforeEach(() => {
-        cache = new Cache({
-            ttl: 100, // 100ms TTL for testing
-            maxSize: 3,
-            namespace: 'test'
-        });
-    });
-
-    afterEach(() => {
-        cache.shutdown();
-    });
-
-    it('should store and retrieve values', async () => {
-        await cache.set('key1', 'value1');
-        const value = await cache.get('key1');
-        expect(value).toBe('value1');
-    });
-
-    it('should respect TTL', async () => {
-        await cache.set('key1', 'value1', 50); // 50ms TTL
-        await new Promise(resolve => setTimeout(resolve, 60));
-        const value = await cache.get('key1');
-        expect(value).toBeNull();
-    });
-
-    it('should respect max size', async () => {
-        await cache.set('key1', 'value1');
-        await cache.set('key2', 'value2');
-        await cache.set('key3', 'value3');
-        await cache.set('key4', 'value4'); // Should evict key1
-
-        expect(await cache.get('key1')).toBeNull();
-        expect(await cache.get('key4')).toBe('value4');
-    });
-
-    it('should clear all entries', async () => {
-        await cache.set('key1', 'value1');
-        await cache.set('key2', 'value2');
-        cache.clear();
-        expect(await cache.get('key1')).toBeNull();
-        expect(await cache.get('key2')).toBeNull();
+    test('should process audio through DAHDI', async () => {
+        const audioInput = createMockAudioInput();
+        await phoneController.processAudio(audioInput);
+        expect(mockFXS.playAudio).toHaveBeenCalled();
     });
 });

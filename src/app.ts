@@ -16,8 +16,6 @@ export class IrohApp {
     private timerService!: TimerService;
 
     constructor() {
-        this.serviceManager = new ServiceManager(config);
-        
         // Create phone controller with proper config
         const phoneConfig: PhoneControllerConfig = {
             fxs: {
@@ -33,7 +31,11 @@ export class IrohApp {
         };
         
         this.phoneController = new PhoneController(phoneConfig);
+        
+        // Initialize service manager with both config and phone controller
+        this.serviceManager = new ServiceManager(config, this.phoneController);
     }
+
 
     // Add getter for phone controller - needed for debug console
     public getPhoneController(): PhoneController {
@@ -137,21 +139,31 @@ export class IrohApp {
 
     private async handleServiceError(error: Error): Promise<void> {
         try {
+            // Log the original error
+            logger.error('Service error occurred', error);
+
             const aiService = this.serviceManager.getAIService();
-            const errorMessage = await aiService
-                .generateSpeech("I apologize, but I'm having trouble with the timer system. Please try again later.");
             
+            // Generate an error message
+            const errorMessage = await aiService.generateSpeech(
+                `I apologize, but I encountered an error. Please try again later.`
+            );
+            
+            // Play the error message
             await this.phoneController.playAudio(errorMessage);
-        } catch (error: unknown) {
-            if (error instanceof Error) {
-                logger.error('Error handling service error:', error);
-            } else {
-                logger.error('Unknown error occurred while handling service error:', 
-                    new Error(String(error)));
+
+        } catch (serviceError: unknown) {
+            // Log the error handling failure
+            logger.error('Error handling service error', serviceError);
+            
+            // Attempt to play error tone as fallback
+            try {
+                await this.phoneController.playTone('error');
+            } catch (toneError: unknown) {
+                logger.error('Failed to play error tone', toneError);
             }
         }
     }
-
     public async shutdown(): Promise<void> {
         try {
             logger.info('Shutting down Iroh application...');

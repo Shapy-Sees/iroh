@@ -12,15 +12,34 @@
     ],
     "baseUrl": ".",
     "paths": {
-      "*": ["src/types/*"]
+      "@/*": ["src/*"],
+      "@types/*": ["src/types/*"],
+      "@config/*": ["src/config/*"],
+      "@hardware/*": ["src/hardware/*"],
+      "@services/*": ["src/services/*"],
+      "@utils/*": ["src/utils/*"]
     },
-    "types": ["node"],
-    "noImplicitAny": false
+    "types": [
+      "node",
+      "jest"
+    ],
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "sourceMap": true,
+    "outDir": "./dist"
   },
   "include": [
     "src/**/*"
   ],
-  "files": [
-    "src/types/index.d.ts"
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts"
   ]
 }
