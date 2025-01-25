@@ -36,6 +36,7 @@ export class ServiceManager extends EventEmitter {
     private intentHandler: IntentHandler;
     private state: ServiceState;
     private readonly phoneController: PhoneController;
+    private readonly home: HAService;
 
     constructor(
         private readonly config: Config,
@@ -63,7 +64,7 @@ export class ServiceManager extends EventEmitter {
             configuredServices: Object.keys(config)
         });
     }
-    
+
     private setupEventHandlers(): void {
         // Handle Home Assistant state changes
         this.homeAssistant.on('state_changed', async (event) => {
@@ -93,6 +94,22 @@ export class ServiceManager extends EventEmitter {
             logger.error('Hardware error detected:', error);
             await this.handleHardwareError(error);
         });
+    }
+
+    public async getHAEntityStatus(entity: string): Promise<any> {
+        return this.home.getEntityState(entity);
+    }
+
+    public async getHAStatus(): Promise<any> {
+        return this.home.getStatus();
+    }
+
+    public async callHAService(service: string, data?: any): Promise<void> {
+        return this.home.executeCommand(service, data);
+    }
+
+    public async updateAIContext(key: string, value: any): Promise<void> {
+        return this.ai.updateContext(key, value);
     }
 
     public async initialize(): Promise<void> {

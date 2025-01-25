@@ -2,6 +2,15 @@
 # run application in dev mode
 NODE_ENV=development npm start
 
+# Start debug console?
+debug console
+
+# Start application with debugger?
+debug inspect
+
+# Run tests with debugger?
+debug test
+
 ## Example debug session:
 
 iroh-debug> help

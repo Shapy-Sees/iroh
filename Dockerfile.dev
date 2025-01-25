@@ -1,0 +1,55 @@
+# src/Dockerfile.dev
+#
+# Development Dockerfile for Iroh project
+# Includes debugging tools but assumes DAHDI drivers on host
+
+FROM node:16-slim
+
+# Install development tools
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3 \
+    vim \
+    curl \
+    netcat \
+    strace \
+    tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install global Node.js development tools
+RUN npm install -g \
+    node-inspect \
+    nodemon \
+    typescript \
+    ts-node
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with development packages
+RUN npm install
+
+# Add debugging scripts
+COPY scripts/debug.sh /usr/local/bin/debug
+RUN chmod +x /usr/local/bin/debug
+
+# Set development environment
+ENV NODE_ENV=development
+ENV DEBUG=iroh:*
+ENV LOG_LEVEL=debug
+
+# Keep container running
+CMD ["/bin/bash"]
+
+
+
+# # Start debug console
+# debug console
+
+# # Start application with debugger
+# debug inspect
+
+# # Run tests with debugger
+# debug test

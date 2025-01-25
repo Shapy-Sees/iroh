@@ -27,6 +27,7 @@ export class PhoneController extends EventEmitter {
     private lastCommandTime: number = 0;
     private readonly COMMAND_TIMEOUT = 2000; // 2 seconds
     private readonly MAX_COMMAND_LENGTH = 8;
+    private isSpecialCommand: boolean = false;
 
     constructor(config: PhoneControllerConfig) {
         super();
@@ -64,6 +65,24 @@ export class PhoneController extends EventEmitter {
         // Set up event handlers
         this.setupEventHandlers();
     }
+
+
+    public startSpecialCommand(): void {
+        this.isSpecialCommand = true;
+    }
+
+    public async playFeedbackTone(type: string): Promise<void> {
+        // Implementation
+    }
+
+    public isOpen(): boolean {
+        return this.fxs.isOpen();
+    }
+
+    public async playTone(frequency: number, duration: number): Promise<void> {
+        // Implementation
+    }
+
 
     private stripSensitiveData(config: any): any {
         const sanitized = { ...config };

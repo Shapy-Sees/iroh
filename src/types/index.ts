@@ -74,7 +74,8 @@ export interface Config {
     app: AppConfig;
     audio: AudioConfig;
     ai: AIConfig;
-    music: MusicConfig;
+    music: MusicConfig; // 
+    home: HomeConfig;   // 
     logging: LogConfig;
 }
 
@@ -92,15 +93,17 @@ export interface AudioConfig {
     silenceThreshold: number;
 }
 
-export interface AIConfig {
-    anthropicKey: string;
-    elevenLabsKey: string;
-    openAIKey: string;
-    maxTokens: number;
-    temperature: number;
-    voiceId: string;
-}
 
+export interface AIConfig {
+    model?: string;      // Add these optional properties
+    apiKey?: string;     // to match what PhoneController expects
+    temperature: number;
+    maxTokens: number;
+    voiceId: string;
+    anthropicKey?: string;
+    elevenLabsKey?: string;
+    openAIKey?: string;
+}
 export interface MusicConfig {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
@@ -136,6 +139,14 @@ export class ServiceError extends IrohError {
         super(message, 'SERVICE_ERROR');
         this.name = 'ServiceError';
     }
+}
+
+export interface HomeConfig {
+    homekitBridge: {
+        pin: string;
+        name: string;
+        port: number;
+    };
 }
 
 export interface PhoneControllerConfig {

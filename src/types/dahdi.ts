@@ -4,6 +4,7 @@
 // These types provide a strongly-typed interface for working with DAHDI hardware
 // and configuring telephony channels.
 
+
 // DAHDI device channel configuration
 export interface DAHDIChannelConfig {
     /** Channel number (1-based) */
@@ -54,6 +55,12 @@ export interface DAHDISpanConfig {
     
     /** Channels associated with this span */
     channels: DAHDIChannelConfig[];
+}
+
+export interface DAHDIReadStream extends NodeJS.ReadableStream {
+    // Add DAHDI-specific properties
+    channel: number;
+    readAudio(): Promise<Buffer>;
 }
 
 // DAHDI system configuration
