@@ -18,6 +18,19 @@ const DAHDI_COMMANDS = {
     CONTROL: '/dev/dahdi/ctl'
 } as const;
 
+// Update the audio buffer handling to use a proper circular buffer:
+
+private initializeAudioBuffer(): void {
+    const bufferConfig = {
+        size: this.config.bufferSize || 320,
+        channels: this.config.channels || 1,
+        sampleRate: this.config.sampleRate
+    };
+    
+    this.audioBuffer = new CircularBuffer(bufferConfig.size);
+    logger.debug('Audio buffer initialized', { config: bufferConfig });
+}
+
 interface FXSConfig {
     devicePath?: string;
     sampleRate: number;

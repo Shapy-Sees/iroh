@@ -9,6 +9,13 @@ import { EventEmitter } from 'events';
 import { HAClient, HAEntity, HAServiceCall } from './ha_client';
 import { Cache } from '../../utils/cache';
 import { logger } from '../../utils/logger';
+import { 
+    HAEntity, 
+    HAConfig, 
+    HAServiceCall,
+    // ... others??
+} from './types';
+
 
 interface HAServiceConfig {
     url: string;

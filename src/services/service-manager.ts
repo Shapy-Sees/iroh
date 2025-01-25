@@ -133,25 +133,29 @@ export class ServiceManager extends EventEmitter {
     }
 
     private async initializeServices(): Promise<void> {
-        // Initialize hardware first
-        await this.hardwareService.initialize();
-        this.state.activeServices.push('hardware');
-
-        // Initialize Home Assistant
-        await this.homeAssistant.initialize();
-        this.state.activeServices.push('homeAssistant');
-
-        // Initialize AI service
-        await this.aiService.initialize();
-        this.state.activeServices.push('ai');
-
-        // Initialize supporting services
-        await Promise.all([
-            this.musicService.initialize(),
-            this.timerService.start()
-        ]);
-        
-        this.state.activeServices.push('music', 'timer');
+        try {
+            // 1. Initialize hardware first
+            logger.info('Initializing hardware services...');
+            await this.hardwareService.initialize();
+            this.state.activeServices.push('hardware');
+    
+            // 2. Initialize DAHDI configuration
+            logger.info('Initializing DAHDI configuration...');
+            await this.dahdiConfig.initialize();
+            
+            // 3. Initialize remaining services in parallel
+            logger.info('Initializing remaining services...');
+            await Promise.all([
+                this.initializeAIService(),
+                this.initializeHomeAssistant(),
+                this.initializeMusicService()
+            ]);
+    
+            logger.info('All services initialized successfully');
+        } catch (error) {
+            logger.error('Service initialization failed:', error);
+            throw error;
+        }
     }
 
     private async verifyServicesHealth(): Promise<void> {

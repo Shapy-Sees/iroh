@@ -55,10 +55,14 @@ export class DTMFDetector extends EventEmitter {
 
     public async analyze(input: AudioInput): Promise<DTMFEvent | null> {
         if (this.isProcessing) {
-            logger.debug('DTMF detector busy, skipping frame');
+            logger.warn('Buffer overflow in DTMF detector, dropping frame');
+            this.emit('overflow', {
+                timestamp: Date.now(),
+                droppedBytes: input.data.length
+            });
             return null;
         }
-
+    
         try {
             this.isProcessing = true;
             logger.debug('Processing DTMF input', { 
