@@ -7,7 +7,7 @@
 
 import { EventEmitter } from 'events';
 import { DAHDIInterface } from '../../hardware/dahdi-interface';
-import { DAHDIConfig } from '../../config/dahdi';
+import { dahdiConfig } from '../../config/dahdi';
 import { DAHDIChannelStatus } from '../../types/dahdi';
 import { logger } from '../../utils/logger';
 

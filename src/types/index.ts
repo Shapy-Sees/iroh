@@ -2,9 +2,10 @@
 //
 // Core type definitions for the entire project.
 // These types provide the foundation for type safety across all components
-// including hardware interfaces, services, and controllers.
+// including hardware interfaces, services, controllers, events and configuration.
 
 import { Buffer } from 'buffer';
+import { EventEmitter } from 'events';
 
 // Audio Processing Types
 export interface AudioInput {
@@ -18,6 +19,19 @@ export interface AudioInput {
     data: Buffer;
 }
 
+export interface AudioOutput {
+    /** Sample rate in Hz */
+    sampleRate: number;
+    /** Number of audio channels */
+    channels: number;
+    /** Bits per sample */
+    bitDepth: number;
+    /** Raw audio data */
+    data: Buffer;
+    /** Additional metadata */
+    metadata?: Record<string, any>;
+}
+
 export interface VoiceEvent {
     /** Raw audio data */
     audio: Buffer;
@@ -27,6 +41,8 @@ export interface VoiceEvent {
     endTime: number;
     /** Whether this is the final segment */
     isFinal: boolean;
+    /** Voice confidence score (0-1) */
+    confidence?: number;
 }
 
 export interface DTMFEvent {
@@ -36,15 +52,46 @@ export interface DTMFEvent {
     duration: number;
     /** Detection timestamp */
     timestamp: number;
+    /** Signal strength/confidence */
+    strength?: number;
 }
 
-// Service Interfaces
+// Hardware Interface Types
+export interface DAHDIChannelParams {
+    channel: number;
+    signaling: string;
+    echocancel?: {
+        enabled: boolean;
+        taps: number;
+    };
+    callerid?: {
+        enabled: boolean;
+        format: string;
+    };
+    impedance: number;
+}
+
+export interface DAHDIStatus {
+    isOpen: boolean;
+    channel: number;
+    alarms: number;
+    signaling: {
+        type: string;
+        hookstate: 'onhook' | 'offhook';
+        ringing: boolean;
+    };
+    levels?: {
+        rxLevel: number;
+        txLevel: number;
+    };
+}
+
+// Service Types
 export interface AudioService {
     processAudio(input: AudioInput): Promise<void>;
-    shutdown(): void;
+    shutdown(): Promise<void>;
 }
 
-// AI Service configuration and interface
 export interface AIServiceConfig {
     /** Anthropic API key */
     anthropicKey: string;
@@ -52,9 +99,9 @@ export interface AIServiceConfig {
     elevenLabsKey?: string;
     /** OpenAI API key for speech recognition */
     openAIKey?: string;
-    /** Model configuration */
+    /** Model parameters */
     model?: string;
-    /** Temperature for generation */
+    /** Generation temperature */
     temperature?: number;
     /** Maximum tokens to generate */
     maxTokens?: number;
@@ -66,10 +113,12 @@ export interface AIService {
     processText(text: string): Promise<string>;
     processVoice(audioBuffer: Buffer): Promise<string>;
     generateSpeech(text: string): Promise<Buffer>;
-    shutdown(): void;
+    processTextStreaming(text: string): Promise<void>;
+    updateContext(key: string, value: any): Promise<void>;
+    shutdown(): Promise<void>;
 }
 
-// Music service types
+// Music Service Types
 export interface MusicService {
     executeCommand(command: string): Promise<void>;
     play(query: string): Promise<void>;
@@ -92,34 +141,60 @@ export interface MusicStatus {
         title: string;
         artist: string;
         duration: number;
+        position?: number;
     };
     volume: number;
     queue: number;
+    repeat?: 'off' | 'track' | 'queue';
+    shuffle?: boolean;
 }
 
-// Home automation types
+// Home Automation Types
 export interface HomeConfig {
     homekitBridge: {
         pin: string;
         name: string;
         port: number;
+        setupCode?: string;
+    };
+    entityPrefix?: string;
+    updateInterval?: number;
+}
+
+export interface HAEntity {
+    entityId: string;
+    state: string;
+    attributes: Record<string, any>;
+    lastChanged: string;
+    lastUpdated: string;
+    context?: {
+        id: string;
+        parentId?: string;
+        userId?: string;
     };
 }
 
-// Phone controller types
+// Phone Controller Types
 export interface PhoneControllerConfig {
     fxs: {
         devicePath: string;
         sampleRate: number;
+        impedance?: number;
     };
     audio: {
         bufferSize: number;
         channels: number;
         bitDepth: number;
+        vadThreshold?: number;
     };
     ai: {
         model?: string;
         apiKey?: string;
+        temperature?: number;
+    };
+    dtmf?: {
+        minDuration: number;
+        threshold: number;
     };
 }
 
@@ -140,6 +215,8 @@ export interface AppConfig {
     env: 'development' | 'production' | 'test';
     /** HTTP port for web interface */
     port: number;
+    /** Base directory for file storage */
+    dataDir?: string;
 }
 
 export interface AudioConfig {
@@ -153,6 +230,8 @@ export interface AudioConfig {
     vadThreshold: number;
     /** Silence detection threshold in ms */
     silenceThreshold: number;
+    /** Buffer size in samples */
+    bufferSize?: number;
 }
 
 export interface AIConfig {
@@ -183,6 +262,26 @@ export interface LogConfig {
     maxFiles: string;
     /** Maximum log file size */
     maxSize: string;
+    /** Whether to log to console */
+    console?: boolean;
+    /** Additional logging options */
+    options?: Record<string, any>;
+}
+
+// Event handler types
+export type EventHandler<T = any> = (data: T) => Promise<void> | void;
+
+// Generic service status interface
+export interface ServiceStatus {
+    isInitialized: boolean;
+    isHealthy: boolean;
+    lastError?: Error;
+    metrics: {
+        uptime: number;
+        errors: number;
+        warnings: number;
+        lastChecked?: Date;
+    };
 }
 
 // Error Types
@@ -207,17 +306,35 @@ export class ServiceError extends IrohError {
     }
 }
 
-// Event handler types
-export type EventHandler<T = any> = (data: T) => Promise<void> | void;
+export class ConfigurationError extends IrohError {
+    constructor(message: string) {
+        super(message, 'CONFIG_ERROR');
+        this.name = 'ConfigurationError';
+    }
+}
 
-// Generic service status interface
-export interface ServiceStatus {
-    isInitialized: boolean;
-    isHealthy: boolean;
-    lastError?: Error;
-    metrics: {
-        uptime: number;
-        errors: number;
-        warnings: number;
+// Event System Types
+export interface EventBusConfig {
+    /** Maximum events to keep in history */
+    maxHistory?: number;
+    /** Whether to enable debug logging */
+    debug?: boolean;
+    /** Event persistence options */
+    persistence?: {
+        enabled: boolean;
+        path?: string;
     };
+}
+
+export interface EventHistoryItem<T = any> {
+    /** Event type/name */
+    event: string;
+    /** Event payload */
+    data: T;
+    /** Event timestamp */
+    timestamp: number;
+    /** Unique event ID */
+    id: string;
+    /** Additional metadata */
+    metadata?: Record<string, any>;
 }

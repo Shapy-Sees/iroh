@@ -1,6 +1,8 @@
 
 This project is written mostly by Claude AI ... so far.
 
+Originally, this project was going to use... apparently magic, to connect to the phone. but now we're going to use DAHDI drivers.
+
 # Iroh 🍵 - AI-Powered Vintage Phone Integration
 
 An AI operator for your vintage telephone, bringing the latest technology of the 19th century to your smart home.

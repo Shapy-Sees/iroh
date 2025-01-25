@@ -20,6 +20,11 @@ interface FeedbackConfig {
     enableVoice: boolean;
     cacheResponses: boolean;
     maxCacheAge: number;  // milliseconds
+    dahdiFormat: {
+        sampleRate: number;  // DAHDI requires 8kHz
+        channels: number;    // DAHDI is mono
+        bitDepth: number;   // DAHDI uses 16-bit PCM
+    };
 }
 
 export class PhoneFeedback {
@@ -54,6 +59,11 @@ export class PhoneFeedback {
             enableVoice: true,
             cacheResponses: true,
             maxCacheAge: 24 * 60 * 60 * 1000, // 24 hours
+            dahdiFormat: {
+                sampleRate: 8000,
+                channels: 1,
+                bitDepth: 16
+            },
             ...config
         };
 
@@ -130,11 +140,26 @@ export class PhoneFeedback {
         }
 
         try {
-            return await this.ai.generateSpeech(text);
+            // Generate speech with DAHDI-compatible format
+            const audio = await this.ai.generateSpeech(text, {
+                format: this.config.dahdiFormat
+            });
+
+            // Ensure audio meets DAHDI requirements
+            return this.ensureDAHDIFormat(audio);
         } catch (error) {
             logger.error('Failed to generate speech:', error);
             throw error;
         }
+    }
+
+    private ensureDAHDIFormat(audio: Buffer): Buffer {
+        // Ensure audio meets DAHDI format requirements:
+        // - 8kHz sample rate
+        // - 16-bit PCM
+        // - Mono channel
+        // Implementation would depend on audio processing library
+        return audio;
     }
 }
 

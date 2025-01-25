@@ -12,6 +12,7 @@ import { EventEmitter } from 'events';
 import { ErrorFeedback } from '../utils/error-messages';
 import { IrohAIService } from '../services/ai/ai-service';
 import { logger } from '../utils/logger';
+import { DAHDIInterface } from '../hardware/dahdi-interface';
 
 interface FeedbackOptions {
     playTones: boolean;
@@ -22,6 +23,7 @@ interface FeedbackOptions {
 export class PhoneFeedbackHandler extends EventEmitter {
     private errorFeedback: ErrorFeedback;
     private aiService: IrohAIService;
+    private dahdi: DAHDIInterface;
     private isPlaying: boolean = false;
     private feedbackQueue: Array<() => Promise<void>> = [];
 
@@ -42,10 +44,11 @@ export class PhoneFeedbackHandler extends EventEmitter {
         ]
     };
 
-    constructor(aiService: IrohAIService) {
+    constructor(aiService: IrohAIService, dahdi: DAHDIInterface) {
         super();
         this.errorFeedback = new ErrorFeedback();
         this.aiService = aiService;
+        this.dahdi = dahdi;
     }
 
     public async handleError(error: Error, context: any, options: Partial<FeedbackOptions> = {}): Promise<void> {
@@ -136,7 +139,12 @@ export class PhoneFeedbackHandler extends EventEmitter {
             if (tone.pause) {
                 await new Promise(resolve => setTimeout(resolve, tone.pause));
             } else {
-                await this.playTone(tone.frequency, tone.duration);
+                // Use DAHDI interface for tone generation
+                await this.dahdi.generateTone({
+                    frequency: tone.frequency,
+                    duration: tone.duration,
+                    level: -10  // dBm0 level for DAHDI
+                });
             }
         }
     }
@@ -147,7 +155,13 @@ export class PhoneFeedbackHandler extends EventEmitter {
     }
 
     private async playAudio(audio: Buffer): Promise<void> {
-        this.emit('audio', audio);
+        try {
+            // Play through DAHDI interface
+            await this.dahdi.playAudio(audio);
+        } catch (error) {
+            logger.error('Error playing audio through DAHDI:', error);
+            throw error;
+        }
     }
 
     public async provideProgressFeedback(progress: number): Promise<void> {
@@ -186,7 +200,7 @@ export class PhoneController {
     private feedbackHandler: PhoneFeedbackHandler;
 
     constructor(config: any) {
-        this.feedbackHandler = new PhoneFeedbackHandler(config.ai);
+        this.feedbackHandler = new PhoneFeedbackHandler(config.ai, config.dahdi);
         this.setupFeedbackHandlers();
     }
 

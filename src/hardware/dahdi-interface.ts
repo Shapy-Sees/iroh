@@ -10,6 +10,8 @@ import { promises as fs } from 'fs';
 import { FileHandle } from 'fs/promises';
 import { CircularBuffer } from '../utils/circular-buffer';
 import { logger } from '../utils/logger';
+import { DAHDIAudioConverter } from './dahdi-audio-converter';
+
 import {
     DAHDIConfig,
     DAHDIError,
@@ -41,6 +43,7 @@ export class DAHDIInterface extends EventEmitter {
     private monitorInterval: NodeJS.Timeout | null = null;
     private lastError: Error | null = null;
     private channelStatus: DAHDIChannelStatus | null = null;
+    private audioConverter: DAHDIAudioConverter;
 
     constructor(config: Partial<DAHDIConfig>) {
         super();
@@ -57,6 +60,12 @@ export class DAHDIInterface extends EventEmitter {
             monitorInterval: 100, // Status check interval
             ...config
         };
+
+        // Initialize audio converter
+        this.audioConverter = new DAHDIAudioConverter({
+            quality: process.env.NODE_ENV === 'production' ? 'best' : 'medium',
+            bufferSize: config.bufferSize || 2048
+        });
 
         // Initialize audio buffer for sample data
         this.audioBuffer = new CircularBuffer(this.config.bufferSize);
@@ -98,7 +107,7 @@ export class DAHDIInterface extends EventEmitter {
         } catch (error) {
             logger.error('Failed to start DAHDI interface:', error);
             await this.cleanup();
-            throw new DAHDIError('Failed to start interface', error);
+            throw new DAHDIError('Failed to start interface', error as Error);
         }
     }
 
@@ -136,7 +145,7 @@ export class DAHDIInterface extends EventEmitter {
 
         } catch (error) {
             logger.error('Failed to configure DAHDI channel:', error);
-            throw new DAHDIError('Channel configuration failed', error);
+            throw new DAHDIError('Channel configuration failed', error as Error);
         }
     }
 
@@ -175,7 +184,7 @@ export class DAHDIInterface extends EventEmitter {
 
         } catch (error) {
             logger.error('Failed to check channel status:', error);
-            throw new DAHDIError('Status check failed', error);
+            throw new DAHDIError('Status check failed', error as Error);
         }
     }
 
@@ -201,7 +210,7 @@ export class DAHDIInterface extends EventEmitter {
 
         } catch (error) {
             logger.error('Failed to start audio handling:', error);
-            throw new DAHDIError('Audio initialization failed', error);
+            throw new DAHDIError('Audio initialization failed', error as Error);
         }
     }
 
@@ -239,35 +248,34 @@ export class DAHDIInterface extends EventEmitter {
         }
     }
 
-    public async playAudio(buffer: Buffer): Promise<void> {
-        if (!this.fileHandle || !this.isActive) {
-            throw new DAHDIError('Device not ready');
-        }
-
+    /**
+     * Handles audio playback with format conversion
+     */
+    public async playAudio(buffer: Buffer, format?: Partial<DAHDIAudioFormat>): Promise<void> {
         try {
-            const { bytesWritten } = await this.fileHandle.write(buffer);
+            // Convert audio if needed
+            const dahdiBuffer = format ? 
+                await this.audioConverter.convertToDAHDI(buffer, format) :
+                buffer;
+                
+            // Play through DAHDI
+            await this.writeAudio(dahdiBuffer);
             
-            if (bytesWritten !== buffer.length) {
-                throw new DAHDIError('Incomplete audio write');
-            }
-
-            logger.debug('Audio written to DAHDI device', { bytes: bytesWritten });
-
         } catch (error) {
             logger.error('Error playing audio:', error);
-            throw new DAHDIError('Audio playback failed', error);
+            throw new DAHDIError('Audio playback failed', error as Error);
         }
     }
 
     public async ring(duration: number = 2000): Promise<void> {
         try {
             // Send ring command
-            await this.dahdiIoctl(DAHDIIOCtl.RING, 1);
+            await this.dahdiIoctl(DAHDIIOCtl.RING_ON, 1);
             
             // Stop ringing after duration
             setTimeout(async () => {
                 try {
-                    await this.dahdiIoctl(DAHDIIOCtl.RING, 0);
+                    await this.dahdiIoctl(DAHDIIOCtl.RING_OFF, 0);
                 } catch (error) {
                     logger.error('Error stopping ring:', error);
                 }
@@ -277,7 +285,19 @@ export class DAHDIInterface extends EventEmitter {
 
         } catch (error) {
             logger.error('Error sending ring signal:', error);
-            throw new DAHDIError('Ring command failed', error);
+            throw new DAHDIError('Ring command failed', error as Error);
+        }
+    }
+
+    private async writeAudio(buffer: Buffer): Promise<void> {
+        if (!this.fileHandle || !this.isActive) {
+            throw new DAHDIError('Device not open or inactive');
+        }
+
+        try {
+            await this.fileHandle.write(buffer);
+        } catch (error) {
+            throw new DAHDIError('Failed to write audio', error as Error);
         }
     }
 
@@ -333,10 +353,13 @@ export class DAHDIInterface extends EventEmitter {
             // Perform cleanup
             await this.cleanup();
             
+            // Clean up converter
+            this.audioConverter.destroy();
+            
             logger.info('DAHDI interface stopped successfully');
         } catch (error) {
             logger.error('Error stopping DAHDI interface:', error);
-            throw new DAHDIError('Failed to stop interface', error);
+            throw new DAHDIError('Failed to stop interface', error as Error);
         }
     }
 }

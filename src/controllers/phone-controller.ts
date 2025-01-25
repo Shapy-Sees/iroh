@@ -1,18 +1,18 @@
 // src/controllers/phone-controller.ts
 //
 // Phone controller that manages DAHDI hardware interface and phone state.
-// Provides high-level control of the telephony system including:
-// - DTMF detection and command processing
-// - Audio streaming and playback
-// - Phone state management (hook state, ringing)
-// - Event handling and error recovery
-// - Hardware feedback and diagnostics
+// This controller is responsible for:
+// - Managing phone state transitions
+// - Processing DTMF and voice commands
+// - Coordinating audio streaming
+// - Handling hardware events and errors
+// - Providing real-time phone status
 
 import { EventEmitter } from 'events';
 import { HardwareService } from '../services/hardware/hardware-service';
 import { DTMFDetector } from '../audio/dtmf-detector';
 import { AIService } from '../services/ai/ai-service';
-import { AudioInput, PhoneControllerConfig } from '../types';
+import { AudioInput, PhoneControllerConfig, DTMFEvent, VoiceEvent } from '../types';
 import { logger } from '../utils/logger';
 import { 
     EVENTS,
@@ -34,14 +34,15 @@ enum PhoneState {
 export class PhoneController extends EventEmitter {
     private hardware: HardwareService;
     private dtmfDetector: DTMFDetector;
-    private aiService: AIService;
+    private aiService: AIService | null = null;
     private currentState: PhoneState = PhoneState.IDLE;
     private commandBuffer: string[] = [];
     private lastCommandTime: number = 0;
     private isProcessingCommand: boolean = false;
     private alarmState: number = DAHDI_ALARMS.NONE;
+    private readonly stateTransitions: Map<PhoneState, Set<PhoneState>>;
+    private eventHandlers: Map<string, Set<Function>>;
     
-    // Initialize configuration from constants
     private readonly config: Required<PhoneControllerConfig> = {
         fxs: {
             devicePath: DEFAULTS.DAHDI.DEVICE_PATH,
@@ -54,11 +55,21 @@ export class PhoneController extends EventEmitter {
             channels: DEFAULTS.AUDIO.CHANNELS,
             bitDepth: DEFAULTS.AUDIO.BIT_DEPTH,
         },
-        ai: {}
+        ai: {},
+        dtmf: {
+            minDuration: TIMEOUTS.DTMF,
+            threshold: 0.25
+        }
     };
 
     constructor(config: Partial<PhoneControllerConfig>) {
         super();
+        
+        // Initialize state transition map
+        this.stateTransitions = this.initializeStateTransitions();
+        
+        // Initialize event handler map
+        this.eventHandlers = new Map();
         
         // Merge provided config with defaults
         this.config = {
@@ -84,13 +95,14 @@ export class PhoneController extends EventEmitter {
         
         // Initialize DTMF detector with DAHDI settings
         this.dtmfDetector = new DTMFDetector({
-            sampleRate: DEFAULTS.AUDIO.SAMPLE_RATE,
-            minDuration: TIMEOUTS.DTMF,
-            bufferSize: DEFAULTS.AUDIO.BUFFER_SIZE
+            sampleRate: this.config.fxs.sampleRate,
+            minDuration: this.config.dtmf.minDuration,
+            threshold: this.config.dtmf.threshold,
+            bufferSize: this.config.audio.bufferSize
         });
 
         // Initialize AI service if configured
-        if (config.ai?.anthropicKey) {
+        if (config.ai?.apiKey) {
             this.aiService = new AIService(config.ai);
         }
         
@@ -98,10 +110,39 @@ export class PhoneController extends EventEmitter {
         this.setupEventHandlers();
     }
 
-    private sanitizeConfig(config: any): any {
-        const sanitized = { ...config };
-        if (sanitized.ai?.anthropicKey) sanitized.ai.anthropicKey = '***';
-        return sanitized;
+    private initializeStateTransitions(): Map<PhoneState, Set<PhoneState>> {
+        const transitions = new Map<PhoneState, Set<PhoneState>>();
+        
+        // Define valid state transitions
+        transitions.set(PhoneState.IDLE, new Set([
+            PhoneState.OFF_HOOK,
+            PhoneState.RINGING,
+            PhoneState.ERROR
+        ]));
+        
+        transitions.set(PhoneState.OFF_HOOK, new Set([
+            PhoneState.IDLE,
+            PhoneState.IN_CALL,
+            PhoneState.ERROR
+        ]));
+        
+        transitions.set(PhoneState.RINGING, new Set([
+            PhoneState.IDLE,
+            PhoneState.OFF_HOOK,
+            PhoneState.ERROR
+        ]));
+        
+        transitions.set(PhoneState.IN_CALL, new Set([
+            PhoneState.IDLE,
+            PhoneState.OFF_HOOK,
+            PhoneState.ERROR
+        ]));
+        
+        transitions.set(PhoneState.ERROR, new Set([
+            PhoneState.IDLE
+        ]));
+        
+        return transitions;
     }
 
     private setupEventHandlers(): void {
@@ -111,49 +152,138 @@ export class PhoneController extends EventEmitter {
         });
 
         this.hardware.on(EVENTS.PHONE.RING_START, () => {
-            this.setState(PhoneState.RINGING);
-            this.emit(EVENTS.PHONE.RING_START);
+            this.handleRingStart();
         });
 
         this.hardware.on(EVENTS.PHONE.RING_STOP, () => {
-            if (this.currentState === PhoneState.RINGING) {
-                this.setState(PhoneState.IDLE);
-            }
-            this.emit(EVENTS.PHONE.RING_STOP);
+            this.handleRingStop();
         });
 
-        // Handle hook state changes
+        // Handle hook state changes with debouncing
+        let hookDebounceTimer: NodeJS.Timeout | null = null;
+        const HOOK_DEBOUNCE_TIME = 100; // ms
+
         this.hardware.on(EVENTS.PHONE.OFF_HOOK, () => {
-            this.handleOffHook();
+            if (hookDebounceTimer) {
+                clearTimeout(hookDebounceTimer);
+            }
+            hookDebounceTimer = setTimeout(() => {
+                this.handleOffHook();
+            }, HOOK_DEBOUNCE_TIME);
         });
 
         this.hardware.on(EVENTS.PHONE.ON_HOOK, () => {
-            this.handleOnHook();
+            if (hookDebounceTimer) {
+                clearTimeout(hookDebounceTimer);
+            }
+            hookDebounceTimer = setTimeout(() => {
+                this.handleOnHook();
+            }, HOOK_DEBOUNCE_TIME);
         });
 
-        // Handle audio events
-        this.hardware.on('audio', (data: AudioInput) => {
-            this.handleAudioData(data).catch(error => {
+        // Handle audio events with error recovery
+        this.hardware.on('audio', async (data: AudioInput) => {
+            try {
+                await this.handleAudioData(data);
+            } catch (error) {
                 logger.error('Error handling audio data:', error);
-            });
+                this.emitError(ERROR_CODES.HARDWARE.AUDIO_ERROR, error);
+            }
         });
 
-        // Handle hardware errors
-        this.hardware.on(EVENTS.SYSTEM.ERROR, (error: Error) => {
+        // Handle hardware errors with recovery attempts
+        this.hardware.on(EVENTS.SYSTEM.ERROR, async (error: Error) => {
             logger.error('Hardware error:', error);
-            this.setState(PhoneState.ERROR);
-            this.emit(EVENTS.SYSTEM.ERROR, {
-                code: ERROR_CODES.HARDWARE.DAHDI_DEVICE_ERROR,
-                error
-            });
+            await this.handleHardwareError(error);
         });
 
-        // Handle DTMF events
-        this.dtmfDetector.on('dtmf', (event) => {
-            this.handleDTMF(event).catch(error => {
-                logger.error('Error handling DTMF:', error);
-            });
+        // Handle DTMF events with validation
+        this.dtmfDetector.on('dtmf', (event: DTMFEvent) => {
+            if (this.validateDTMF(event)) {
+                this.handleDTMF(event).catch(error => {
+                    logger.error('Error handling DTMF:', error);
+                    this.emitError(ERROR_CODES.HARDWARE.DTMF_ERROR, error);
+                });
+            }
         });
+    }
+
+    public on(event: string, handler: Function): this {
+        // Add to our custom event handler map
+        const handlers = this.eventHandlers.get(event) || new Set();
+        handlers.add(handler);
+        this.eventHandlers.set(event, handlers);
+        
+        // Also register with EventEmitter
+        super.on(event, handler as any);
+        return this;
+    }
+
+    public off(event: string, handler: Function): this {
+        // Remove from our custom event handler map
+        const handlers = this.eventHandlers.get(event);
+        if (handlers) {
+            handlers.delete(handler);
+            if (handlers.size === 0) {
+                this.eventHandlers.delete(event);
+            }
+        }
+        
+        // Also remove from EventEmitter
+        super.off(event, handler as any);
+        return this;
+    }
+
+    private async emitEvent(event: string, data?: any): Promise<void> {
+        // Get handlers for this event
+        const handlers = this.eventHandlers.get(event);
+        if (handlers) {
+            // Execute all handlers
+            const promises = Array.from(handlers).map(handler => {
+                try {
+                    return Promise.resolve(handler(data));
+                } catch (error) {
+                    logger.error(`Error in event handler for ${event}:`, error);
+                    return Promise.reject(error);
+                }
+            });
+            
+            // Wait for all handlers to complete
+            await Promise.allSettled(promises);
+        }
+        
+        // Emit through EventEmitter
+        this.emit(event, data);
+    }
+
+    private emitError(code: string, error: Error): void {
+        const errorEvent = {
+            code,
+            error,
+            timestamp: Date.now()
+        };
+        this.emit(EVENTS.SYSTEM.ERROR, errorEvent);
+    }
+
+    private async setState(newState: PhoneState): Promise<void> {
+        // Validate state transition
+        const allowedStates = this.stateTransitions.get(this.currentState);
+        if (!allowedStates?.has(newState)) {
+            logger.error(`Invalid state transition from ${this.currentState} to ${newState}`);
+            return;
+        }
+
+        const oldState = this.currentState;
+        this.currentState = newState;
+        
+        logger.info('Phone state changed', {
+            from: oldState,
+            to: newState,
+            timestamp: Date.now()
+        });
+
+        // Emit state change event
+        await this.emitEvent('stateChange', { oldState, newState });
     }
 
     private handleAlarmState(alarmType: number): void {
