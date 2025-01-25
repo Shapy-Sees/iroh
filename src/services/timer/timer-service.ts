@@ -1,18 +1,15 @@
 // src/services/timer/timer-service.ts
 //
-// A service that manages countdown timers and coordinates 
-// between hardware device notifications and phone ringing.
-// Uses serialport package for hardware communication.
+// Timer service that manages countdown timers through DAHDI
+// Instead of using serial port communication, this version integrates
+// with the DAHDI hardware interface directly for timing and notification
 
 import { EventEmitter } from 'events';
-import SerialPort from 'serialport';
 import { PhoneController } from '../../controllers/phone-controller';
 import { IrohAIService } from '../ai/ai-service';
 import { logger } from '../../utils/logger';
 
 interface TimerConfig {
-    devicePath: string;  // Serial port config for hardware device
-    baudRate: number;
     maxTimers: number;   // Maximum concurrent timers 
     maxDuration: number; // Max duration in minutes
 }
@@ -28,11 +25,8 @@ interface Timer {
 
 export class TimerService extends EventEmitter {
     private timers: Map<string, Timer>;
-    private serialPort: SerialPort | null = null;
     private checkInterval: NodeJS.Timeout | null = null;
     private readonly config: Required<TimerConfig>;
-    private reconnectAttempts: number = 0;
-    private readonly MAX_RECONNECT_ATTEMPTS = 5;
 
     constructor(
         config: Partial<TimerConfig>,
@@ -43,8 +37,6 @@ export class TimerService extends EventEmitter {
         
         // Set config with defaults
         this.config = {
-            devicePath: '/dev/ttyUSB1',
-            baudRate: 9600,
             maxTimers: 5,
             maxDuration: 180, // 3 hours max
             ...config
@@ -54,68 +46,11 @@ export class TimerService extends EventEmitter {
         
         // Setup event handlers
         this.setupVoiceCommands();
-    }
-
-    private async initializeSerialPort(): Promise<void> {
-        try {
-            // If we already have a port, close it first
-            if (this.serialPort) {
-                this.serialPort.removeAllListeners();
-                await new Promise<void>((resolve) => {
-                    if (this.serialPort?.isOpen) {
-                        this.serialPort.close(() => resolve());
-                    } else {
-                        resolve();
-                    }
-                });
-            }
-
-            // Create new serial port instance
-            this.serialPort = new SerialPort(this.config.devicePath, {
-                baudRate: this.config.baudRate,
-                autoOpen: false
-            });
-
-            // Set up event handlers
-            this.serialPort.on('open', () => {
-                logger.info('Timer hardware connection established');
-                this.reconnectAttempts = 0;
-            });
-
-            this.serialPort.on('error', (error: Error) => {
-                logger.error('Timer hardware error:', error);
-                this.handleSerialError(error);
-            });
-
-            this.serialPort.on('close', () => {
-                logger.warn('Serial port closed unexpectedly');
-                this.handleSerialClose();
-            });
-
-            this.serialPort.on('data', (data: Buffer) => {
-                this.handleSerialData(data);
-            });
-
-            // Open the port
-            await new Promise<void>((resolve, reject) => {
-                if (!this.serialPort) {
-                    reject(new Error('Serial port not initialized'));
-                    return;
-                }
-
-                this.serialPort.open((err) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                });
-            });
-
-        } catch (error) {
-            logger.error('Failed to initialize serial port:', error);
-            throw error;
-        }
+        
+        logger.info('Timer service constructed', { 
+            maxTimers: this.config.maxTimers,
+            maxDuration: this.config.maxDuration 
+        });
     }
 
     private setupVoiceCommands(): void {
@@ -147,53 +82,6 @@ export class TimerService extends EventEmitter {
                 await this.phone.playAudio(errorMsg);
             }
         });
-    }
-
-    private handleSerialError(error: Error): void {
-        logger.error('Serial port error:', error);
-        this.emit('error', error);
-        this.attemptReconnect();
-    }
-
-    private handleSerialClose(): void {
-        logger.warn('Serial port closed');
-        this.attemptReconnect();
-    }
-
-    private async attemptReconnect(): Promise<void> {
-        if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
-            logger.error('Max reconnection attempts reached');
-            this.emit('error', new Error('Unable to establish serial connection'));
-            return;
-        }
-
-        this.reconnectAttempts++;
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-
-        logger.info(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
-
-        setTimeout(async () => {
-            try {
-                await this.initializeSerialPort();
-                logger.info('Serial connection reestablished');
-            } catch (error) {
-                logger.error('Reconnection attempt failed:', error);
-            }
-        }, delay);
-    }
-
-    private handleSerialData(data: Buffer): void {
-        try {
-            const message = data.toString().trim();
-            if (message.startsWith('TIMER_COMPLETE:')) {
-                const timerId = message.split(':')[1];
-                this.handleTimerComplete(timerId).catch((error) => {
-                    logger.error('Error handling timer completion:', error);
-                });
-            }
-        } catch (error) {
-            logger.error('Error processing serial data:', error);
-        }
     }
 
     private parseTimerCommand(text: string): number | null {
@@ -258,28 +146,8 @@ export class TimerService extends EventEmitter {
         };
 
         this.timers.set(id, timer);
-
-        // Send to hardware
-        await this.sendToHardware(`SET_TIMER:${id}:${duration}`);
-
         logger.info('Timer set', { id, duration });
         return id;
-    }
-
-    private async sendToHardware(command: string): Promise<void> {
-        if (!this.serialPort?.isOpen) {
-            throw new Error('Serial port not open');
-        }
-
-        return new Promise<void>((resolve, reject) => {
-            this.serialPort?.write(`${command}\n`, (error) => {
-                if (error) {
-                    reject(error);
-                    return;
-                }
-                this.serialPort?.drain(() => resolve());
-            });
-        });
     }
 
     private async handleTimerComplete(timerId: string): Promise<void> {
@@ -292,7 +160,7 @@ export class TimerService extends EventEmitter {
         this.emit('timerComplete', timerId);
 
         try {
-            // Ring the phone
+            // Ring the phone through DAHDI
             await this.phone.playTone('busy');
             
             // Play timer completion message when answered
@@ -301,6 +169,8 @@ export class TimerService extends EventEmitter {
                 const speech = await this.ai.generateSpeech("Your timer has completed.");
                 await this.phone.playAudio(speech);
             });
+
+            logger.info('Timer completed', { timerId });
         } catch (error) {
             logger.error('Error handling timer completion:', error);
         }
@@ -308,9 +178,6 @@ export class TimerService extends EventEmitter {
 
     public async start(): Promise<void> {
         try {
-            // Initialize serial connection
-            await this.initializeSerialPort();
-
             // Start timer check interval
             this.checkInterval = setInterval(() => {
                 this.checkTimers();
@@ -358,14 +225,6 @@ export class TimerService extends EventEmitter {
             });
         }
 
-        // Close serial connection
-        if (this.serialPort?.isOpen) {
-            await new Promise<void>((resolve) => {
-                this.serialPort?.close(() => resolve());
-            });
-        }
-
-        this.serialPort = null;
         logger.info('Timer service stopped');
     }
 
@@ -375,9 +234,6 @@ export class TimerService extends EventEmitter {
             throw new Error('Timer not found');
         }
 
-        // Cancel on hardware
-        await this.sendToHardware(`CANCEL_TIMER:${id}`);
-        
         this.timers.delete(id);
         this.emit('timerCancelled', id);
         

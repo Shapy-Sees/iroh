@@ -29,6 +29,9 @@ const ConfigSchema = z.object({
         defaultzone: z.string().default('us'),
         echocancel: z.boolean().default(true),
         echocanceltaps: z.number().min(32).max(1024).default(128),
+        bufferSize: z.number().default(320), // 20ms at 8kHz/16-bit
+        ringTimeout: z.number().default(2000), // Ring timeout in ms
+        dtmfTimeout: z.number().default(40), // DTMF detection minimum duration
     }),
     audio: z.object({
         sampleRate: z.literal(8000), // DAHDI requires 8kHz
@@ -38,8 +41,8 @@ const ConfigSchema = z.object({
         silenceThreshold: z.number().min(100).max(2000).default(500),
     }),
     homeAssistant: z.object({
-        url: z.string().url(),
-        token: z.string(),
+        url: z.string().url().optional(),
+        token: z.string().optional(),
         entityPrefix: z.string().default('iroh_'),
         updateInterval: z.number().min(1000).default(5000),
         retryAttempts: z.number().min(1).default(3),
@@ -87,9 +90,9 @@ function loadConfig(): Config {
             ...config,
             dahdi: {
                 ...config.dahdi,
-                device: process.env.DAHDI_DEVICE,
-                span: Number(process.env.DAHDI_SPAN),
-                channel: Number(process.env.DAHDI_CHANNEL),
+                device: process.env.DAHDI_DEVICE || config.dahdi?.device,
+                span: Number(process.env.DAHDI_SPAN) || config.dahdi?.span,
+                channel: Number(process.env.DAHDI_CHANNEL) || config.dahdi?.channel,
             },
             homeAssistant: {
                 ...config.homeAssistant,
@@ -111,7 +114,7 @@ function loadConfig(): Config {
         logger.info('Configuration loaded', {
             env,
             dahdiDevice: validatedConfig.dahdi.device,
-            haUrl: validatedConfig.homeAssistant.url,
+            sampleRate: validatedConfig.audio.sampleRate,
             logLevel: validatedConfig.logging.level,
         });
 

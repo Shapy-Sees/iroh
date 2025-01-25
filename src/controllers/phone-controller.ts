@@ -1,319 +1,382 @@
 // src/controllers/phone-controller.ts
 //
-// Phone controller that manages:
-// - DAHDI hardware interface through FXS
-// - DTMF detection and command routing
-// - Audio playback and recording
-// - Phone state management
-// - Feedback tones and audio responses
-// The controller coordinates between the hardware layer and higher-level services
+// Phone controller that manages DAHDI hardware interface and phone state.
+// Provides high-level control of the telephony system including:
+// - DTMF detection and command processing
+// - Audio streaming and playback
+// - Phone state management (hook state, ringing)
+// - Event handling and error recovery
+// - Hardware feedback and diagnostics
 
 import { EventEmitter } from 'events';
-import { FXSInterface } from '../hardware/fxs-interface';
+import { HardwareService } from '../services/hardware/hardware-service';
 import { DTMFDetector } from '../audio/dtmf-detector';
+import { AIService } from '../services/ai/ai-service';
 import { AudioInput, PhoneControllerConfig } from '../types';
 import { logger } from '../utils/logger';
-import { EVENTS, ERROR_CODES } from '../core/constants';
+import { 
+    EVENTS,
+    ERROR_CODES,
+    TIMEOUTS,
+    DEFAULTS,
+    DAHDI_ALARMS 
+} from '../core/constants';
 
-// Define feedback tone types
-export type ToneType = 'dial' | 'busy' | 'confirm' | 'error' | 'ring';
+// Phone states based on DAHDI hardware states
+enum PhoneState {
+    IDLE = 'idle',
+    OFF_HOOK = 'off_hook',
+    RINGING = 'ringing',
+    IN_CALL = 'in_call',
+    ERROR = 'error'
+}
+
 export class PhoneController extends EventEmitter {
-    private fxs: FXSInterface;
+    private hardware: HardwareService;
     private dtmfDetector: DTMFDetector;
-    private isActive: boolean = false;
-    private readonly feedbackTones: Map<ToneType, Buffer>;
-    private readonly config: Required<PhoneControllerConfig>;
+    private aiService: AIService;
+    private currentState: PhoneState = PhoneState.IDLE;
     private commandBuffer: string[] = [];
     private lastCommandTime: number = 0;
-    private readonly COMMAND_TIMEOUT = 2000; // 2 seconds
-    private readonly MAX_COMMAND_LENGTH = 8;
-    private isSpecialCommand: boolean = false;
+    private isProcessingCommand: boolean = false;
+    private alarmState: number = DAHDI_ALARMS.NONE;
+    
+    // Initialize configuration from constants
+    private readonly config: Required<PhoneControllerConfig> = {
+        fxs: {
+            devicePath: DEFAULTS.DAHDI.DEVICE_PATH,
+            sampleRate: DEFAULTS.AUDIO.SAMPLE_RATE,
+            channels: DEFAULTS.AUDIO.CHANNELS,
+            bitDepth: DEFAULTS.AUDIO.BIT_DEPTH
+        },
+        audio: {
+            bufferSize: DEFAULTS.AUDIO.BUFFER_SIZE,
+            channels: DEFAULTS.AUDIO.CHANNELS,
+            bitDepth: DEFAULTS.AUDIO.BIT_DEPTH,
+        },
+        ai: {}
+    };
 
-    constructor(config: PhoneControllerConfig) {
+    constructor(config: Partial<PhoneControllerConfig>) {
         super();
         
-        // Initialize configuration with proper merging
+        // Merge provided config with defaults
         this.config = {
-            fxs: {
-                devicePath: config.fxs?.devicePath || '/dev/dahdi/channel001',
-                sampleRate: config.fxs?.sampleRate || 8000,
-            },
-            audio: {
-                bufferSize: config.audio?.bufferSize || 320,
-                channels: config.audio?.channels || 1,
-                bitDepth: config.audio?.bitDepth || 16,
-            },
-            ai: config.ai || {}
+            ...this.config,
+            ...config,
+            fxs: { ...this.config.fxs, ...config.fxs },
+            audio: { ...this.config.audio, ...config.audio },
+            ai: { ...this.config.ai, ...config.ai }
         };
 
         logger.debug('Initializing phone controller', {
-            config: this.stripSensitiveData(this.config)
+            config: this.sanitizeConfig(this.config)
         });
 
-        // Initialize FXS interface
-        this.fxs = new FXSInterface(this.config.fxs);
+        // Initialize hardware service
+        this.hardware = new HardwareService({
+            devicePath: this.config.fxs.devicePath,
+            sampleRate: this.config.fxs.sampleRate,
+            channels: this.config.audio.channels,
+            bitDepth: this.config.audio.bitDepth,
+            bufferSize: this.config.audio.bufferSize
+        });
         
         // Initialize DTMF detector with DAHDI settings
         this.dtmfDetector = new DTMFDetector({
-            sampleRate: this.config.fxs.sampleRate,
-            minDuration: 40  // 40ms minimum for valid DTMF
+            sampleRate: DEFAULTS.AUDIO.SAMPLE_RATE,
+            minDuration: TIMEOUTS.DTMF,
+            bufferSize: DEFAULTS.AUDIO.BUFFER_SIZE
         });
 
-        // Initialize feedback tones for DAHDI
-        this.feedbackTones = this.initializeFeedbackTones();
+        // Initialize AI service if configured
+        if (config.ai?.anthropicKey) {
+            this.aiService = new AIService(config.ai);
+        }
         
         // Set up event handlers
         this.setupEventHandlers();
     }
 
-
-    public startSpecialCommand(): void {
-        this.isSpecialCommand = true;
-    }
-
-    public async playFeedbackTone(type: string): Promise<void> {
-        // Implementation
-    }
-
-    public isOpen(): boolean {
-        return this.fxs.isOpen();
-    }
-
-    public async playTone(frequency: number, duration: number): Promise<void> {
-        // Implementation
-    }
-
-
-    private stripSensitiveData(config: any): any {
+    private sanitizeConfig(config: any): any {
         const sanitized = { ...config };
         if (sanitized.ai?.anthropicKey) sanitized.ai.anthropicKey = '***';
         return sanitized;
     }
 
-    private initializeFeedbackTones(): Map<ToneType, Buffer> {
-        const tones = new Map<ToneType, Buffer>();
-        
-        // Generate DAHDI-compatible tones
-        tones.set('dial', this.generateTone(350, 440, 1.0));   // Dial tone
-        tones.set('busy', this.generateTone(480, 620, 0.5));   // Busy signal
-        tones.set('confirm', this.generateTone(600, 0, 0.2));  // Confirmation beep
-        tones.set('error', this.generateTone(480, 620, 0.3));  // Error tone
-        tones.set('ring', this.generateTone(440, 480, 2.0));   // Ring tone
-        
-        return tones;
-    }
-
-    private generateTone(freq1: number, freq2: number, duration: number): Buffer {
-        // Generate 16-bit PCM audio buffer for DAHDI
-        const sampleRate = this.config.fxs.sampleRate;
-        const samples = Math.floor(sampleRate * duration);
-        const buffer = Buffer.alloc(samples * 2);  // 2 bytes per sample
-
-        for (let i = 0; i < samples; i++) {
-            const t = i / sampleRate;
-            let sample = Math.sin(2 * Math.PI * freq1 * t);
-            if (freq2 > 0) {
-                sample += Math.sin(2 * Math.PI * freq2 * t);
-                sample *= 0.5; // Normalize amplitude
-            }
-            
-            // Convert to 16-bit PCM for DAHDI
-            const value = Math.floor(sample * 32767);
-            buffer.writeInt16LE(value, i * 2);
-        }
-
-        return buffer;
-    }
-
     private setupEventHandlers(): void {
-        // Handle FXS events from DAHDI
-        this.fxs.on('off_hook', () => this.handleOffHook());
-        this.fxs.on('on_hook', () => this.handleOnHook());
-        this.fxs.on('audio', (data) => this.handleAudioData(data));
-        this.fxs.on('ring_start', () => this.handleRingStart());
-        this.fxs.on('ring_stop', () => this.handleRingStop());
-        this.fxs.on('error', (error: Error) => this.handleError(error));
+        // Handle DAHDI hardware events
+        this.hardware.on(EVENTS.DAHDI.ALARM, (alarmType: number) => {
+            this.handleAlarmState(alarmType);
+        });
+
+        this.hardware.on(EVENTS.PHONE.RING_START, () => {
+            this.setState(PhoneState.RINGING);
+            this.emit(EVENTS.PHONE.RING_START);
+        });
+
+        this.hardware.on(EVENTS.PHONE.RING_STOP, () => {
+            if (this.currentState === PhoneState.RINGING) {
+                this.setState(PhoneState.IDLE);
+            }
+            this.emit(EVENTS.PHONE.RING_STOP);
+        });
+
+        // Handle hook state changes
+        this.hardware.on(EVENTS.PHONE.OFF_HOOK, () => {
+            this.handleOffHook();
+        });
+
+        this.hardware.on(EVENTS.PHONE.ON_HOOK, () => {
+            this.handleOnHook();
+        });
+
+        // Handle audio events
+        this.hardware.on('audio', (data: AudioInput) => {
+            this.handleAudioData(data).catch(error => {
+                logger.error('Error handling audio data:', error);
+            });
+        });
+
+        // Handle hardware errors
+        this.hardware.on(EVENTS.SYSTEM.ERROR, (error: Error) => {
+            logger.error('Hardware error:', error);
+            this.setState(PhoneState.ERROR);
+            this.emit(EVENTS.SYSTEM.ERROR, {
+                code: ERROR_CODES.HARDWARE.DAHDI_DEVICE_ERROR,
+                error
+            });
+        });
 
         // Handle DTMF events
-        this.dtmfDetector.on('dtmf', (event) => this.handleDTMF(event));
-
-        logger.debug('Phone controller event handlers initialized');
+        this.dtmfDetector.on('dtmf', (event) => {
+            this.handleDTMF(event).catch(error => {
+                logger.error('Error handling DTMF:', error);
+            });
+        });
     }
 
-    public async start(): Promise<void> {
-        try {
-            logger.info('Starting phone controller');
-            await this.fxs.start();
-            this.emit('ready');
-            logger.info('Phone controller started successfully');
-        } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Failed to start phone controller:', err);
-            throw err;
-        }
-    }
+    private handleAlarmState(alarmType: number): void {
+        this.alarmState = alarmType;
+        logger.warn('DAHDI alarm state changed:', {
+            alarmType,
+            description: this.getAlarmDescription(alarmType)
+        });
 
-    public getFXSInterface(): FXSInterface {
-        return this.fxs;
-    }
-
-    public async playTone(type: ToneType): Promise<void> {
-        if (!this.isActive) {
-            logger.warn('Cannot play tone - phone is not active');
-            return;
+        // Handle specific alarm conditions
+        if (alarmType & DAHDI_ALARMS.RED) {
+            this.setState(PhoneState.ERROR);
+            this.emit(EVENTS.SYSTEM.ERROR, {
+                code: ERROR_CODES.HARDWARE.DAHDI_SYNC_ERROR,
+                message: 'Lost signal on DAHDI device'
+            });
         }
 
-        const tone = this.feedbackTones.get(type);
-        if (!tone) {
-            logger.warn('Tone not found:', { type });
-            return;
-        }
-
-        try {
-            await this.fxs.playAudio(tone);
-            logger.debug('Played tone', { type });
-        } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Error playing tone:', err);
-            throw err;
+        if (alarmType & DAHDI_ALARMS.NOTOPEN) {
+            this.setState(PhoneState.ERROR);
+            this.emit(EVENTS.SYSTEM.ERROR, {
+                code: ERROR_CODES.HARDWARE.DAHDI_DEVICE_NOT_FOUND,
+                message: 'DAHDI device not opened'
+            });
         }
     }
 
-    public async playAudio(buffer: Buffer): Promise<void> {
-        if (!this.isActive) {
-            logger.warn('Cannot play audio - phone is not active');
-            return;
-        }
+    private getAlarmDescription(alarmType: number): string {
+        const alarms: string[] = [];
+        if (alarmType & DAHDI_ALARMS.RED) alarms.push('RED_ALARM');
+        if (alarmType & DAHDI_ALARMS.YELLOW) alarms.push('YELLOW_ALARM');
+        if (alarmType & DAHDI_ALARMS.BLUE) alarms.push('BLUE_ALARM');
+        if (alarmType & DAHDI_ALARMS.NOTOPEN) alarms.push('DEVICE_NOT_OPEN');
+        if (alarmType & DAHDI_ALARMS.RESET) alarms.push('NEEDS_RESET');
+        if (alarmType & DAHDI_ALARMS.LOOPBACK) alarms.push('IN_LOOPBACK');
+        if (alarmType & DAHDI_ALARMS.RECOVERING) alarms.push('RECOVERING');
+        return alarms.join(', ') || 'NO_ALARM';
+    }
 
-        try {
-            await this.fxs.playAudio(buffer);
-            logger.debug('Played audio buffer', { bytes: buffer.length });
-        } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Error playing audio:', err);
-            await this.playTone('error').catch(e => 
-                logger.error('Error playing error tone:', e)
-            );
-            throw err;
-        }
+    private setState(newState: PhoneState): void {
+        const oldState = this.currentState;
+        this.currentState = newState;
+        
+        logger.info('Phone state changed', {
+            from: oldState,
+            to: newState
+        });
+
+        this.emit('stateChange', { oldState, newState });
     }
 
     private async handleOffHook(): Promise<void> {
         logger.info('Phone off hook detected');
-        this.isActive = true;
+        this.setState(PhoneState.OFF_HOOK);
         this.commandBuffer = [];
-        await this.playTone('dial');
-        this.emit(EVENTS.PHONE.OFF_HOOK);
+
+        try {
+            // Play dial tone
+            await this.playTone('dial');
+            this.emit(EVENTS.PHONE.OFF_HOOK);
+        } catch (error) {
+            logger.error('Error handling off hook:', error);
+            await this.handleHardwareError(error);
+        }
     }
 
     private async handleOnHook(): Promise<void> {
         logger.info('Phone on hook detected');
-        this.isActive = false;
+        this.setState(PhoneState.IDLE);
         this.commandBuffer = [];
         this.emit(EVENTS.PHONE.ON_HOOK);
     }
 
     private async handleAudioData(audioInput: AudioInput): Promise<void> {
-        if (!this.isActive) return;
+        if (this.currentState === PhoneState.ERROR) return;
 
         try {
-            // Process for DTMF using DAHDI's detection
-            await this.dtmfDetector.analyze(audioInput);
-            
-            // Emit audio data for voice processing
-            this.emit('audio', audioInput);
+            // Process for DTMF first
+            const dtmfResult = await this.dtmfDetector.analyze(audioInput);
+            if (dtmfResult) {
+                logger.debug('DTMF detected in audio stream', {
+                    digit: dtmfResult.digit,
+                    duration: dtmfResult.duration
+                });
+                return;
+            }
+
+            // If in call state, emit audio for further processing
+            if (this.currentState === PhoneState.IN_CALL) {
+                this.emit('audio', audioInput);
+            }
         } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Error processing audio:', err);
-            this.handleError(err);
+            logger.error('Error processing audio data:', error);
+            this.emit(EVENTS.SYSTEM.ERROR, {
+                code: ERROR_CODES.HARDWARE.AUDIO_ERROR,
+                error
+            });
         }
     }
 
-    private async handleDTMF(event: { digit: string; duration: number }): Promise<void> {
-        const now = Date.now();
-
-        // Reset command buffer if timeout exceeded
-        if (now - this.lastCommandTime > this.COMMAND_TIMEOUT) {
-            this.commandBuffer = [];
-        }
-
-        // Add digit to command buffer
-        this.commandBuffer.push(event.digit);
-        this.lastCommandTime = now;
-
-        logger.debug('DTMF received', { 
-            digit: event.digit,
-            bufferLength: this.commandBuffer.length
-        });
-
-        // Emit DTMF event
-        this.emit(EVENTS.PHONE.DTMF, event);
-
-        // Check for complete commands
-        await this.checkCommands();
-    }
-
-    private async checkCommands(): Promise<void> {
-        const sequence = this.commandBuffer.join('');
+    private async handleHardwareError(error: Error): Promise<void> {
+        this.setState(PhoneState.ERROR);
         
-        // Check for special commands
-        if (sequence.endsWith('#')) {
-            // Complete command detected
-            const command = sequence.slice(0, -1);
-            logger.info('Command sequence detected', { command });
+        try {
+            // Attempt hardware recovery
+            await this.hardware.runDiagnostics();
             
-            this.emit('command', command);
-            this.commandBuffer = [];
-            
-            await this.playTone('confirm').catch(e => 
-                logger.error('Error playing confirmation tone:', e)
-            );
-        } else if (sequence.length >= this.MAX_COMMAND_LENGTH) {
-            // Command too long, reset
-            logger.warn('Command sequence too long, resetting');
-            this.commandBuffer = [];
-            
-            await this.playTone('error').catch(e => 
-                logger.error('Error playing error tone:', e)
-            );
+            // If successful, restore previous state
+            if (this.alarmState === DAHDI_ALARMS.NONE) {
+                this.setState(PhoneState.IDLE);
+                logger.info('Hardware recovery successful');
+            } else {
+                throw new Error('Hardware still in alarm state');
+            }
+        } catch (recoveryError) {
+            logger.error('Hardware recovery failed:', recoveryError);
+            this.emit(EVENTS.SYSTEM.ERROR, {
+                code: ERROR_CODES.HARDWARE.DAHDI_DEVICE_ERROR,
+                error: recoveryError
+            });
         }
     }
 
-    private async handleRingStart(): Promise<void> {
-        logger.debug('Ring start detected');
-        // Handle incoming call ring
-        await this.playTone('ring');
+    public async start(): Promise<void> {
+        try {
+            logger.info('Starting phone controller');
+            
+            // Initialize hardware service
+            await this.hardware.initialize();
+            
+            // Reset state
+            this.setState(PhoneState.IDLE);
+            this.commandBuffer = [];
+            this.lastCommandTime = 0;
+            
+            this.emit(EVENTS.SYSTEM.READY);
+            logger.info('Phone controller started successfully');
+        } catch (error) {
+            logger.error('Failed to start phone controller:', error);
+            throw error;
+        }
     }
 
-    private async handleRingStop(): Promise<void> {
-        logger.debug('Ring stop detected');
-        // Clean up any ring-related state
+    public async playTone(type: string): Promise<void> {
+        if (this.currentState === PhoneState.ERROR) {
+            logger.warn('Cannot play tone - phone in error state');
+            return;
+        }
+
+        try {
+            // Get tone configuration from constants
+            const toneConfig = DEFAULTS.DAHDI.TONES?.[type];
+            if (!toneConfig) {
+                throw new Error(`Unknown tone type: ${type}`);
+            }
+
+            await this.hardware.playTone(toneConfig);
+            logger.debug('Played tone', { type });
+        } catch (error) {
+            logger.error('Error playing tone:', error);
+            throw error;
+        }
     }
 
-    private handleError(error: Error): void {
-        logger.error('Phone controller error:', error);
-        this.emit(EVENTS.SYSTEM.ERROR, {
-            code: ERROR_CODES.HARDWARE.FXS_ERROR,
-            error
-        });
+    public async playAudio(buffer: Buffer): Promise<void> {
+        if (this.currentState === PhoneState.ERROR) {
+            logger.warn('Cannot play audio - phone in error state');
+            return;
+        }
+
+        try {
+            await this.hardware.playAudio(buffer);
+            logger.debug('Played audio buffer', { bytes: buffer.length });
+        } catch (error) {
+            logger.error('Error playing audio:', error);
+            throw error;
+        }
     }
 
-    public isPhoneActive(): boolean {
-        return this.isActive;
+    public async ring(duration: number = TIMEOUTS.RING): Promise<void> {
+        if (this.currentState !== PhoneState.IDLE) {
+            logger.warn('Cannot ring - phone not idle');
+            return;
+        }
+
+        try {
+            await this.hardware.ring(duration);
+            logger.debug('Ring initiated', { duration });
+        } catch (error) {
+            logger.error('Error initiating ring:', error);
+            throw error;
+        }
+    }
+
+    public getState(): PhoneState {
+        return this.currentState;
+    }
+
+    public getAlarmState(): number {
+        return this.alarmState;
+    }
+
+    public async runDiagnostics(): Promise<any> {
+        return await this.hardware.runDiagnostics();
     }
 
     public async stop(): Promise<void> {
         try {
             logger.info('Stopping phone controller');
-            this.isActive = false;
-            await this.fxs.stop();
+            
+            // Stop all subsystems
+            await this.hardware.shutdown();
             this.dtmfDetector.shutdown();
+            
+            // Clear state
+            this.setState(PhoneState.IDLE);
+            this.commandBuffer = [];
             this.removeAllListeners();
+            
             logger.info('Phone controller stopped successfully');
         } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Error stopping phone controller:', err);
-            throw err;
+            logger.error('Error stopping phone controller:', error);
+            throw error;
         }
     }
 }

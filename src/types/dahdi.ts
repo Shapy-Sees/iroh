@@ -1,251 +1,251 @@
-// src/types/dahdi.ts
+// src/config/dahdi.ts
 //
-// Type definitions for interacting with DAHDI (Digium Asterisk Hardware Device Interface)
-// These types provide a strongly-typed interface for working with DAHDI hardware
-// and configuring telephony channels.
+// DAHDI configuration management that handles the configuration and validation
+// of DAHDI hardware settings. This includes channel configuration, audio parameters,
+// and hardware-specific options for the OpenVox A400P FXS card.
 
+import { z } from 'zod';
+import { config as dotenvConfig } from 'dotenv';
+import { logger } from '../utils/logger';
 
-// DAHDI device channel configuration
-export interface DAHDIChannelConfig {
-    /** Channel number (1-based) */
-    channel: number;
-    
-    /** Signaling type (e.g., 'fxs_ls' for loopstart FXS) */
-    signaling: DAHDISignalingType;
-    
-    /** Echo cancellation configuration */
-    echocancel?: {
-        enabled: boolean;
-        taps?: number;  // Length of echo canceller in taps (32-1024)
-    };
-    
-    /** Caller ID configuration */
-    callerid?: {
-        enabled: boolean;
-        format?: 'bell' | 'v23' | 'dtmf';
-    };
-    
-    /** Impedance setting for the channel */
-    impedance?: 600 | 900;  // Common impedance values in ohms
-}
+// Load environment variables
+dotenvConfig();
 
-// Valid DAHDI signaling types
-export type DAHDISignalingType = 
-    | 'fxs_ls'  // FXS Loopstart
-    | 'fxs_gs'  // FXS Groundstart
-    | 'fxs_ks'  // FXS Kewlstart
-    | 'unused'; // Unconfigured channel
-
-// DAHDI span (card) configuration
-export interface DAHDISpanConfig {
-    /** Span number (1-based) */
-    span: number;
-    
-    /** Timing source priority (0 = disabled, 1-n = priority) */
-    timing: number;
-    
-    /** Line build out (signal boost) in dB */
-    lbo?: number;
-    
-    /** Frame format (esf/d4/ccs/cas) */
-    framing?: string;
-    
-    /** Line coding (ami/b8zs/hdb3) */
-    coding?: string;
-    
-    /** Channels associated with this span */
-    channels: DAHDIChannelConfig[];
-}
-
-export interface DAHDIReadStream extends NodeJS.ReadableStream {
-    // Add DAHDI-specific properties
-    channel: number;
-    readAudio(): Promise<Buffer>;
-}
-
-// DAHDI system configuration
-export interface DAHDISystemConfig {
-    /** System-wide echo canceller configuration */
-    echocancel: {
-        enabled: boolean;
-        taps?: number;
-    };
-    
-    /** Loading zones for tones (e.g., 'us', 'uk', etc.) */
-    loadzone: string[];
-    
-    /** Default zone for tones */
-    defaultzone: string;
-    
-    /** Spans (cards) in the system */
-    spans: DAHDISpanConfig[];
-}
-
-// DAHDI hardware info
-export interface DAHDIHardwareInfo {
-    /** Device name (e.g., "OpenVox A400P") */
-    name: string;
-    
-    /** Device location (e.g., "PCI 0000:00:1f.0") */
-    location: string;
-    
-    /** Number of spans on device */
-    spans: number;
-    
-    /** Number of channels per span */
-    channelsPerSpan: number;
-    
-    /** Hardware manufacturer ID */
-    manufacturer: string;
-    
-    /** Hardware capabilities bitmask */
-    capabilities: number;
-}
-
-// DAHDI channel status
-export interface DAHDIChannelStatus {
-    /** Channel number */
-    channel: number;
-    
-    /** Whether channel is ready for use */
-    initialized: boolean;
-    
-    /** Whether channel is currently in use */
-    active: boolean;
-    
-    /** Current signaling state */
-    signaling: {
-        /** Hook state (on/off hook) */
-        hookstate: 'onhook' | 'offhook';
-        
-        /** Ring indicator */
-        ringing: boolean;
-        
-        /** Received caller ID */
-        callerid?: string;
-    };
-    
-    /** Audio level measurements */
-    levels: {
-        /** Receive level in dB */
-        rx: number;
-        
-        /** Transmit level in dB */
-        tx: number;
-    };
-    
-    /** Error conditions if any */
-    errors?: {
-        code: number;
-        message: string;
-    }[];
-}
-
-// DAHDI statistics
-export interface DAHDIStats {
-    /** Number of active channels */
-    activeChannels: number;
-    
-    /** Total frames processed */
-    frames: number;
-    
-    /** Frame errors detected */
-    frameErrors: number;
-    
-    /** CRC errors detected */
-    crcErrors: number;
-    
-    /** Number of times buffer underran */
-    underruns: number;
-    
-    /** Number of times buffer overran */
-    overruns: number;
-}
-
-// DAHDI audio format specification
-export interface DAHDIAudioFormat {
-    /** Sample rate in Hz */
-    sampleRate: 8000;  // DAHDI only supports 8kHz
-    
-    /** Number of channels */
-    channels: 1;       // DAHDI uses mono audio
-    
-    /** Sample format */
-    format: 'linear' | 'alaw' | 'ulaw';
-    
-    /** Bits per sample */
-    bitDepth: 16;      // DAHDI uses 16-bit samples
-}
-
-// IOCTL commands for DAHDI device control
-export const DAHDIIOCtl = {
-    /** Get/set channel parameters */
-    GET_PARAMS: 0x40045700,
-    SET_PARAMS: 0x40045701,
-    
-    /** Audio control */
-    AUDIO_GAIN: 0x40045702,
-    AUDIO_TONES: 0x40045703,
-    
-    /** Channel state */
-    GET_CHANNO: 0x40045704,
-    GET_BUFINFO: 0x40045705,
-    
-    /** Signaling operations */
-    DIAL: 0x40045706,
-    HOOK: 0x40045707,
-    RING: 0x40045708,
-    
-    /** Echo cancellation */
-    EC_DISABLE: 0x40045709,
-    EC_ENABLE: 0x4004570a,
-    
-    /** Tone detection */
-    SET_DTMF_MODE: 0x4004570b,
-    GET_DTMF_MODE: 0x4004570c
+// Define constants that were previously missing
+const DAHDI_TIMEOUTS = {
+    RING: 2000,        // Ring duration in ms
+    DTMF: 40,         // DTMF detection minimum duration in ms
+    ECHO_CANCEL: 128,  // Echo cancellation taps
+    BUFFER: 20        // Audio buffer size in ms
 } as const;
 
-// Buffer information structure
-export interface DAHDIBufferInfo {
-    /** Total size of buffer in bytes */
-    size: number;
+// Hardware constants
+const DAHDI_CONSTANTS = {
+    DEVICE_PATH: '/dev/dahdi/channel',
+    CONTROL_PATH: '/dev/dahdi/ctl',
+    LOADZONE: 'us',
+    DEFAULT_ZONE: 'us',
+    LINE_IMPEDANCE: 600,  // Standard line impedance
+    FXS_VOLTAGE: 48,     // FXS port voltage
+    RING_VOLTAGE: 90,    // Ring voltage
+    MAX_CHANNELS: 32,    // Maximum channels per span
+    MIN_BUFFER_SIZE: 32, // Minimum buffer size (samples)
+    MAX_BUFFER_SIZE: 8192, // Maximum buffer size (samples)
+    EC_TAPS: 128        // Default echo cancellation taps
+} as const;
+
+// Define DAHDI hardware configuration interface
+export interface DAHDIHardwareConfig {
+    /** Path to DAHDI device */
+    devicePath: string;
     
-    /** Number of blocks in buffer */
-    blocks: number;
+    /** Sample rate - DAHDI requires 8000 Hz */
+    sampleRate: number;
     
-    /** Size of each block in bytes */
-    blocksize: number;
-    
-    /** Number of blocks currently queued */
-    queued: number;
+    /** Channel configuration */
+    channel?: {
+        /** Channel number (1-based) */
+        number: number;
+        
+        /** Ring cadence in milliseconds (on/off pairs) */
+        ringCadence: number[];
+        
+        /** Caller ID format */
+        callerIdFormat: 'bell' | 'v23' | 'dtmf';
+        
+        /** Line impedance (600Ω or 900Ω only) */
+        impedance: 600 | 900;
+        
+        /** Audio gain settings */
+        gain?: {
+            /** Receive gain (-12 to 12 dB) */
+            rx: number;
+            /** Transmit gain (-12 to 12 dB) */
+            tx: number;
+        };
+    };
+
+    /** Audio processing configuration */
+    audio?: {
+        /** Echo cancellation settings */
+        echoCancellation: {
+            /** Enable echo cancellation */
+            enabled: boolean;
+            /** Number of taps (32-1024) */
+            taps: number;
+            /** Non-linear processing */
+            nlp: boolean;
+        };
+        
+        /** Automatic gain control */
+        gainControl: {
+            /** Enable AGC */
+            enabled: boolean;
+            /** Target level in dB */
+            targetLevel: number;
+            /** Maximum gain in dB */
+            maxGain: number;
+        };
+        
+        /** DTMF detection configuration */
+        dtmfDetection: {
+            /** Use hardware DTMF detection */
+            useHardware: boolean;
+            /** Minimum duration for valid DTMF */
+            minDuration: number;
+            /** Detection threshold */
+            threshold: number;
+        };
+    };
+
+    /** Debug options */
+    debug?: {
+        /** Enable hardware logging */
+        logHardware: boolean;
+        /** Log audio data */
+        logAudio: boolean;
+        /** Trace DAHDI operations */
+        traceDahdi: boolean;
+    };
 }
 
-// Error codes that can be returned by DAHDI operations
-export enum DAHDIErrorCode {
-    /** No error occurred */
-    SUCCESS = 0,
+// Validation schema using Zod
+const DAHDIConfigSchema = z.object({
+    devicePath: z.string().startsWith('/dev/dahdi/'),
+    sampleRate: z.literal(8000),
     
-    /** Device is busy or unavailable */
-    BUSY = -16,
-    
-    /** Invalid parameter provided */
-    INVALID_PARAM = -22,
-    
-    /** Operation not permitted */
-    NOT_PERMITTED = -1,
-    
-    /** No such device exists */
-    NO_DEVICE = -19,
-    
-    /** Device or resource busy */
-    RESOURCE_BUSY = -16,
-    
-    /** Operation timed out */
-    TIMEOUT = -110,
-    
-    /** I/O error occurred */
-    IO_ERROR = -5,
-    
-    /** Operation would block */
-    WOULD_BLOCK = -11
+    channel: z.object({
+        number: z.number().min(1),
+        ringCadence: z.array(z.number()).min(2),
+        callerIdFormat: z.enum(['bell', 'v23', 'dtmf']),
+        impedance: z.union([z.literal(600), z.literal(900)]),
+        gain: z.object({
+            rx: z.number().min(-12).max(12),
+            tx: z.number().min(-12).max(12)
+        }).optional()
+    }).optional(),
+
+    audio: z.object({
+        echoCancellation: z.object({
+            enabled: z.boolean(),
+            taps: z.number().min(32).max(1024),
+            nlp: z.boolean()
+        }),
+        gainControl: z.object({
+            enabled: z.boolean(),
+            targetLevel: z.number(),
+            maxGain: z.number()
+        }),
+        dtmfDetection: z.object({
+            useHardware: z.boolean(),
+            minDuration: z.number().min(20).max(500),
+            threshold: z.number()
+        })
+    }).optional(),
+
+    debug: z.object({
+        logHardware: z.boolean(),
+        logAudio: z.boolean(),
+        traceDahdi: z.boolean()
+    }).optional()
+});
+
+// Validation function
+export function validateDAHDIConfig(config: DAHDIHardwareConfig): string[] {
+    const errors: string[] = [];
+
+    try {
+        DAHDIConfigSchema.parse(config);
+    } catch (error) {
+        if (error instanceof z.ZodError) {
+            errors.push(...error.errors.map(err => err.message));
+        }
+    }
+
+    // Additional hardware-specific validation
+    if (config.audio?.echoCancellation.enabled) {
+        if (config.audio.echoCancellation.taps % 32 !== 0) {
+            errors.push('Echo cancellation taps must be a multiple of 32');
+        }
+    }
+
+    if (config.channel?.ringCadence) {
+        if (config.channel.ringCadence.length % 2 !== 0) {
+            errors.push('Ring cadence must have an even number of entries (on/off pairs)');
+        }
+    }
+
+    return errors;
 }
+
+// Default DAHDI configuration
+export const dahdiConfig: DAHDIHardwareConfig = {
+    devicePath: process.env.DAHDI_DEVICE_PATH || `${DAHDI_CONSTANTS.DEVICE_PATH}/channel001`,
+    sampleRate: 8000, // DAHDI requires 8kHz
+    
+    channel: {
+        number: Number(process.env.DAHDI_CHANNEL) || 1,
+        ringCadence: [2000, 4000], // 2s on, 4s off
+        callerIdFormat: 'bell',
+        impedance: DAHDI_CONSTANTS.LINE_IMPEDANCE as 600 | 900,
+        gain: {
+            rx: 0,
+            tx: 0
+        }
+    },
+
+    audio: {
+        echoCancellation: {
+            enabled: true,
+            taps: DAHDI_CONSTANTS.EC_TAPS,
+            nlp: true
+        },
+        gainControl: {
+            enabled: true,
+            targetLevel: -15, // dB
+            maxGain: 12
+        },
+        dtmfDetection: {
+            useHardware: true,
+            minDuration: DAHDI_TIMEOUTS.DTMF,
+            threshold: 0.25
+        }
+    },
+
+    debug: {
+        logHardware: process.env.NODE_ENV === 'development',
+        logAudio: false,
+        traceDahdi: process.env.NODE_ENV === 'development'
+    }
+};
+
+// Helper function to create configuration
+export function createDAHDIConfig(
+    customConfig: Partial<DAHDIHardwareConfig>
+): DAHDIHardwareConfig {
+    const merged = {
+        ...dahdiConfig,
+        ...customConfig,
+        channel: customConfig.channel ? {
+            ...dahdiConfig.channel,
+            ...customConfig.channel
+        } : dahdiConfig.channel,
+        audio: customConfig.audio ? {
+            ...dahdiConfig.audio,
+            ...customConfig.audio
+        } : dahdiConfig.audio
+    };
+
+    const errors = validateDAHDIConfig(merged);
+    if (errors.length > 0) {
+        const errorMessage = `Invalid DAHDI configuration:\n${errors.map(e => `- ${e}`).join('\n')}`;
+        logger.error(errorMessage);
+        throw new Error(errorMessage);
+    }
+
+    return merged;
+}
+
+// Export type definitions for use in other files
+export type { DAHDIHardwareConfig };
+export { DAHDI_TIMEOUTS, DAHDI_CONSTANTS };

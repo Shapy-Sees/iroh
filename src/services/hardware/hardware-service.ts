@@ -1,24 +1,22 @@
 // src/services/hardware/hardware-service.ts
 //
-// Hardware service for managing DAHDI hardware resources and diagnostics.
+// Hardware service that manages DAHDI hardware resources and diagnostics.
 // This service coordinates hardware initialization, monitors health,
-// and provides diagnostic capabilities for the FXS interface.
+// and provides diagnostic capabilities. It now specifically uses the 
+// DAHDI interface for hardware communication.
 
 import { EventEmitter } from 'events';
-import { FXSInterface } from '../../hardware/fxs-interface';
+import { DAHDIInterface } from '../../hardware/dahdi-interface';
 import { DAHDIConfig } from '../../config/dahdi';
+import { DAHDIChannelStatus } from '../../types/dahdi';
 import { logger } from '../../utils/logger';
 
 interface HardwareStatus {
     isInitialized: boolean;
-    fxsStatus: {
+    dahdiStatus: {
         isOpen: boolean;
         lastError?: Error;
-        channelStatus: Array<{
-            channel: number;
-            active: boolean;
-            errors: number;
-        }>;
+        channelStatus: DAHDIChannelStatus | null;
     };
     systemHealth: {
         temperature?: number;
@@ -31,23 +29,24 @@ interface HardwareStatus {
 }
 
 export class HardwareService extends EventEmitter {
+    private dahdi: DAHDIInterface;
     private dahdiConfig: DAHDIConfig;
-    private fxsInterface: FXSInterface;
     private status: HardwareStatus;
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private readonly HEALTH_CHECK_INTERVAL = 60000; // 1 minute
 
-    constructor(fxsInterface: FXSInterface) {
+    constructor(config: DAHDIConfig) {
         super();
-        this.fxsInterface = fxsInterface;
-        this.dahdiConfig = new DAHDIConfig();
+        
+        this.dahdiConfig = config;
+        this.dahdi = new DAHDIInterface(config);
         
         // Initialize status
         this.status = {
             isInitialized: false,
-            fxsStatus: {
+            dahdiStatus: {
                 isOpen: false,
-                channelStatus: []
+                channelStatus: null
             },
             systemHealth: {
                 voltages: {},
@@ -59,17 +58,34 @@ export class HardwareService extends EventEmitter {
     }
 
     private setupEventHandlers(): void {
-        // Monitor FXS interface events
-        this.fxsInterface.on('error', (error: Error) => {
-            logger.error('FXS interface error:', error);
-            this.status.fxsStatus.lastError = error;
+        // Monitor DAHDI interface events
+        this.dahdi.on('error', (error: Error) => {
+            logger.error('DAHDI interface error:', error);
+            this.status.dahdiStatus.lastError = error;
             this.status.systemHealth.errors++;
             this.emit('hardware_error', error);
         });
 
-        this.fxsInterface.on('ready', () => {
-            this.status.fxsStatus.isOpen = true;
+        this.dahdi.on('ready', () => {
+            this.status.dahdiStatus.isOpen = true;
             this.emit('hardware_ready');
+        });
+
+        // Handle hook state changes
+        this.dahdi.on('hook_state', ({ offHook }) => {
+            logger.debug('Hook state change detected', { offHook });
+            this.emit('hook_state', { offHook });
+        });
+
+        // Handle ring events
+        this.dahdi.on('ring_start', () => {
+            logger.debug('Ring start detected');
+            this.emit('ring_start');
+        });
+
+        this.dahdi.on('ring_stop', () => {
+            logger.debug('Ring stop detected');
+            this.emit('ring_stop');
         });
     }
 
@@ -77,16 +93,8 @@ export class HardwareService extends EventEmitter {
         try {
             logger.info('Initializing hardware service');
 
-            // Load DAHDI configuration
-            await this.dahdiConfig.load();
-
-            // Validate system configuration
-            if (!await this.dahdiConfig.validateSystem()) {
-                throw new Error('DAHDI system validation failed');
-            }
-
-            // Start FXS interface
-            await this.fxsInterface.start();
+            // Start DAHDI interface
+            await this.dahdi.start();
 
             // Start health monitoring
             this.startHealthMonitoring();
@@ -113,29 +121,29 @@ export class HardwareService extends EventEmitter {
         logger.debug('Performing hardware health check');
 
         try {
-            // Check DAHDI system status
-            const hardwareInfo = this.dahdiConfig.getHardwareInfo();
-            
-            if (hardwareInfo) {
-                // Update channel status
-                const config = this.dahdiConfig.getConfig();
-                this.status.fxsStatus.channelStatus = config.spans.flatMap(span =>
-                    span.channels.map(channel => ({
-                        channel: channel.channel,
-                        active: this.fxsInterface.isOpen(),
-                        errors: 0  // Reset error count on successful check
-                    }))
-                );
+            // Get current DAHDI channel status
+            const channelStatus = this.dahdi.getStatus();
+            if (channelStatus) {
+                this.status.dahdiStatus.channelStatus = channelStatus;
 
-                // Check FXS port voltage (if available)
-                // This would require actual hardware interaction
-                this.status.systemHealth.voltages.fxs = 48; // Nominal FXS voltage
+                // Check FXS port voltage
+                if (channelStatus.levels) {
+                    this.status.systemHealth.voltages.fxs = 48; // Nominal FXS voltage
+                }
 
                 // Update system health status
                 this.emit('health_update', this.status);
             } else {
-                throw new Error('Unable to get hardware information');
+                throw new Error('Unable to get DAHDI channel status');
             }
+
+            // Check for any lingering errors
+            const lastError = this.dahdi.getLastError();
+            if (lastError) {
+                logger.warn('Last error detected:', lastError);
+                this.status.dahdiStatus.lastError = lastError;
+            }
+
         } catch (error) {
             logger.error('Health check error:', error);
             this.status.systemHealth.errors++;
@@ -148,18 +156,18 @@ export class HardwareService extends EventEmitter {
         const results = [];
 
         try {
-            // Test DAHDI configuration
+            // Test DAHDI interface status
             results.push({
-                test: 'DAHDI Configuration',
-                passed: await this.dahdiConfig.validateSystem(),
-                message: 'DAHDI system validation completed'
+                test: 'DAHDI Interface',
+                passed: this.dahdi.isOpen(),
+                message: this.dahdi.isOpen() ? 'DAHDI interface is active' : 'DAHDI interface is not active'
             });
 
-            // Test FXS interface
+            // Test hook state detection
             results.push({
-                test: 'FXS Interface',
-                passed: this.fxsInterface.isOpen(),
-                message: this.fxsInterface.isOpen() ? 'FXS interface is active' : 'FXS interface is not active'
+                test: 'Hook State Detection',
+                passed: Boolean(this.status.dahdiStatus.channelStatus),
+                message: 'Hook state detection system operational'
             });
 
             // Test audio path
@@ -168,6 +176,14 @@ export class HardwareService extends EventEmitter {
                 test: 'Audio Path',
                 passed: audioTestResult.passed,
                 message: audioTestResult.message
+            });
+
+            // Test ring generation
+            const ringTestResult = await this.testRingGeneration();
+            results.push({
+                test: 'Ring Generation',
+                passed: ringTestResult.passed,
+                message: ringTestResult.message
             });
 
             return results;
@@ -182,8 +198,8 @@ export class HardwareService extends EventEmitter {
             // Generate test tone
             const testTone = this.generateTestTone();
             
-            // Try to play and record the tone
-            await this.fxsInterface.playAudio(testTone);
+            // Try to play the tone through DAHDI
+            await this.dahdi.playAudio(testTone);
             
             return {
                 passed: true,
@@ -197,13 +213,30 @@ export class HardwareService extends EventEmitter {
         }
     }
 
+    private async testRingGeneration(): Promise<{ passed: boolean; message: string }> {
+        try {
+            // Test short ring burst
+            await this.dahdi.ring(500); // 500ms ring
+            
+            return {
+                passed: true,
+                message: 'Ring generation test completed successfully'
+            };
+        } catch (error) {
+            return {
+                passed: false,
+                message: `Ring generation test failed: ${error instanceof Error ? error.message : String(error)}`
+            };
+        }
+    }
+
     private generateTestTone(): Buffer {
         // Generate a 1kHz test tone
-        const sampleRate = 8000;
+        const sampleRate = 8000; // DAHDI sample rate
         const duration = 0.1; // 100ms
         const frequency = 1000;
         const samples = Math.floor(sampleRate * duration);
-        const buffer = Buffer.alloc(samples * 2);
+        const buffer = Buffer.alloc(samples * 2); // 16-bit samples
 
         for (let i = 0; i < samples; i++) {
             const value = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0x7FFF;
@@ -217,6 +250,24 @@ export class HardwareService extends EventEmitter {
         return { ...this.status };
     }
 
+    public async ring(duration: number = 2000): Promise<void> {
+        try {
+            await this.dahdi.ring(duration);
+        } catch (error) {
+            logger.error('Error during ring generation:', error);
+            throw error;
+        }
+    }
+
+    public async playAudio(buffer: Buffer): Promise<void> {
+        try {
+            await this.dahdi.playAudio(buffer);
+        } catch (error) {
+            logger.error('Error playing audio:', error);
+            throw error;
+        }
+    }
+
     public async shutdown(): Promise<void> {
         logger.info('Shutting down hardware service');
 
@@ -227,11 +278,11 @@ export class HardwareService extends EventEmitter {
                 this.healthCheckInterval = null;
             }
 
-            // Stop FXS interface
-            await this.fxsInterface.stop();
+            // Stop DAHDI interface
+            await this.dahdi.stop();
 
             this.status.isInitialized = false;
-            this.status.fxsStatus.isOpen = false;
+            this.status.dahdiStatus.isOpen = false;
 
             logger.info('Hardware service shutdown complete');
         } catch (error) {

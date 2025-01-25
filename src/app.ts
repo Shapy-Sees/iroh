@@ -1,43 +1,155 @@
 // src/app.ts
 //
 // Main application entry point for Project Iroh.
-// Initializes and coordinates all core services including the new timer service.
+// Initializes and coordinates all core services including the hardware interface,
+// phone controller, and service manager. Handles startup, shutdown, and error recovery.
 
 import { PhoneController } from './controllers/phone-controller';
 import { ServiceManager } from './services/service-manager';
 import { TimerService } from './services/timer/timer-service';
-import { PhoneControllerConfig } from './types';
+import { HardwareService } from './services/hardware/hardware-service';
+import { Config, PhoneControllerConfig, AIConfig } from './types';
 import { config } from './config';
 import { logger } from './utils/logger';
 
 export class IrohApp {
     private phoneController!: PhoneController;
-    private serviceManager: ServiceManager;
+    private serviceManager!: ServiceManager;
     private timerService!: TimerService;
+    private hardwareService!: HardwareService;
 
     constructor() {
-        // Create phone controller with proper config
+        // Create phone controller config with proper types
         const phoneConfig: PhoneControllerConfig = {
             fxs: {
-                devicePath: process.env.FXS_DEVICE_PATH || '/dev/ttyUSB0',
-                sampleRate: config.audio.sampleRate
+                devicePath: process.env.DAHDI_DEVICE_PATH || '/dev/dahdi/channel001',
+                sampleRate: 8000
             },
             audio: {
                 bufferSize: 320,
-                channels: config.audio.channels,
-                bitDepth: config.audio.bitDepth
+                channels: 1,
+                bitDepth: 16
             },
-            ai: config.ai
+            ai: {
+                model: 'claude-3-opus-20240229',
+                apiKey: config.ai.anthropicKey
+            }
         };
+
+        // Create complete config for service manager
+        const serviceConfig: Config = {
+            app: config.app,
+            audio: config.audio,
+            ai: {
+                anthropicKey: config.ai.anthropicKey,
+                elevenLabsKey: config.ai.elevenLabsKey,
+                openAIKey: config.ai.openAIKey,
+                maxTokens: config.ai.maxTokens,
+                temperature: config.ai.temperature,
+                voiceId: config.ai.voiceId
+            },
+            music: {
+                spotifyClientId: process.env.SPOTIFY_CLIENT_ID,
+                spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET
+            },
+            home: {
+                homekitBridge: {
+                    pin: process.env.HOMEKIT_PIN || '031-45-154',
+                    name: 'Iroh Bridge',
+                    port: 47128
+                }
+            },
+            logging: config.logging
+        };
+
+        // Initialize services
+        this.initializeServices(phoneConfig, serviceConfig);
         
-        this.phoneController = new PhoneController(phoneConfig);
+        // Set up global error handlers
+        this.setupErrorHandlers();
         
-        // Initialize service manager with both config and phone controller
-        this.serviceManager = new ServiceManager(config, this.phoneController);
+        logger.info('Application constructed with configuration', {
+            config: this.sanitizeConfig(serviceConfig)
+        });
     }
 
+    private sanitizeConfig(config: Config): Partial<Config> {
+        // Remove sensitive data for logging
+        return {
+            ...config,
+            ai: { ...config.ai, anthropicKey: '***', elevenLabsKey: '***', openAIKey: '***' },
+            music: { ...config.music, spotifyClientSecret: '***' }
+        };
+    }
 
-    // Add getter for phone controller - needed for debug console
+    private initializeServices(phoneConfig: PhoneControllerConfig, serviceConfig: Config): void {
+        // Initialize hardware service
+        this.hardwareService = new HardwareService(phoneConfig.fxs);
+
+        // Initialize phone controller
+        this.phoneController = new PhoneController(phoneConfig);
+        
+        // Initialize service manager with config and phone controller
+        this.serviceManager = new ServiceManager(serviceConfig, this.phoneController);
+
+        // Initialize timer service
+        this.timerService = new TimerService(
+            { maxTimers: 5, maxDuration: 180 },
+            this.phoneController,
+            this.serviceManager.getAIService()
+        );
+    }
+
+    private setupErrorHandlers(): void {
+        // Handle uncaught errors
+        process.on('uncaughtException', (error: Error) => {
+            logger.error('Uncaught exception:', error);
+            this.handleFatalError(error);
+        });
+
+        // Handle unhandled promise rejections
+        process.on('unhandledRejection', (reason: unknown) => {
+            const error = reason instanceof Error ? reason : new Error(String(reason));
+            logger.error('Unhandled rejection:', error);
+            this.handleFatalError(error);
+        });
+
+        // Handle hardware errors
+        this.hardwareService.on('hardware_error', async (error: Error) => {
+            logger.error('Hardware error detected:', error);
+            await this.handleHardwareError(error);
+        });
+    }
+
+    private async handleHardwareError(error: Error): Promise<void> {
+        try {
+            logger.warn('Attempting hardware recovery...');
+            
+            // Stop all services
+            await this.stopServices();
+            
+            // Reinitialize hardware
+            await this.hardwareService.initialize();
+            
+            // Restart services
+            await this.startServices();
+            
+            logger.info('Hardware recovery successful');
+        } catch (recoveryError) {
+            logger.error('Hardware recovery failed:', recoveryError);
+            await this.handleFatalError(recoveryError);
+        }
+    }
+
+    private async handleFatalError(error: Error): Promise<void> {
+        logger.error('Fatal error occurred:', error);
+        try {
+            await this.shutdown();
+        } finally {
+            process.exit(1);
+        }
+    }
+
     public getPhoneController(): PhoneController {
         return this.phoneController;
     }
@@ -46,140 +158,77 @@ export class IrohApp {
         try {
             logger.info('Starting Iroh application...');
             
-            // Initialize services
-            await this.serviceManager.initialize();
-            
-            // Initialize timer service after other services
-            this.initializeTimerService();
-            
-            // Start phone controller
-            await this.phoneController.start();
-
-            // Start timer service
-            await this.timerService.start();
-
-            // Set up event handlers
-            this.setupEventHandlers();
+            // Start services in correct order
+            await this.startServices();
             
             logger.info('Iroh application started successfully');
         } catch (error) {
-            logger.error('Failed to start application:', error as Error);
+            logger.error('Failed to start application:', error);
             throw error;
         }
     }
 
-    private initializeTimerService(): void {
-        const timerConfig = {
-            devicePath: process.env.TIMER_DEVICE_PATH || '/dev/ttyUSB1',
-            baudRate: 9600,
-            maxTimers: 5,
-            maxDuration: 180 // 3 hours in minutes
-        };
-
-        const aiService = this.serviceManager.getAIService();
-        this.timerService = new TimerService(
-            timerConfig,
-            this.phoneController,
-            aiService
-        );
-
-        // Handle timer service errors
-        this.timerService.on('error', async (error: Error) => {
-            logger.error('Timer service error:', error);
-            await this.handleServiceError(error);
-        });
-    }
-
-    private setupEventHandlers(): void {
-        this.phoneController.on('dtmf', async (digit: string) => {
-            try {
-                await this.handleDTMFCommand(digit);
-            } catch (error) {
-                logger.error('Error handling DTMF command:', error as Error);
-            }
-        });
-
-        this.phoneController.on('voice', async (audioBuffer: Buffer) => {
-            try {
-                await this.handleVoiceCommand(audioBuffer);
-            } catch (error) {
-                logger.error('Error handling voice command:', error as Error);
-            }
-        });
-
-        // Handle timer completions
-        this.timerService.on('timerComplete', async (timerId: string) => {
-            logger.info('Timer completed', { timerId });
-        });
-    }
-
-    private async handleDTMFCommand(digit: string): Promise<void> {
-        // Handle DTMF commands
-        await this.serviceManager.handleCommand(digit);
-    }
-
-    private async handleVoiceCommand(audioBuffer: Buffer): Promise<void> {
+    private async startServices(): Promise<void> {
         try {
-            await this.serviceManager.handleCommand('voice', audioBuffer);
+            // Initialize hardware first
+            await this.hardwareService.initialize();
+
+            // Initialize service manager
+            await this.serviceManager.initialize();
             
-            this.serviceManager.once('response', async (audioResponse: Buffer) => {
-                try {
-                    await this.phoneController.playTone('confirm');
-                    await this.phoneController.playAudio(audioResponse);
-                } catch (error) {
-                    logger.error('Error playing audio response:', error as Error);
-                    await this.phoneController.playTone('error');
-                }
-            });
+            // Start timer service
+            await this.timerService.start();
+            
+            // Start phone controller last
+            await this.phoneController.start();
+            
+            logger.info('All services started successfully');
         } catch (error) {
-            logger.error('Error handling voice command:', error as Error);
-            await this.phoneController.playTone('error');
+            logger.error('Service initialization failed:', error);
+            await this.stopServices();
+            throw error;
         }
     }
 
-    private async handleServiceError(error: Error): Promise<void> {
-        try {
-            // Log the original error
-            logger.error('Service error occurred', error);
-
-            const aiService = this.serviceManager.getAIService();
-            
-            // Generate an error message
-            const errorMessage = await aiService.generateSpeech(
-                `I apologize, but I encountered an error. Please try again later.`
+    private async stopServices(): Promise<void> {
+        logger.info('Stopping services...');
+        
+        // Stop in reverse order of initialization
+        if (this.timerService) {
+            await this.timerService.stop().catch(e => 
+                logger.error('Error stopping timer service:', e)
             );
-            
-            // Play the error message
-            await this.phoneController.playAudio(errorMessage);
-
-        } catch (serviceError: unknown) {
-            // Log the error handling failure
-            logger.error('Error handling service error', serviceError);
-            
-            // Attempt to play error tone as fallback
-            try {
-                await this.phoneController.playTone('error');
-            } catch (toneError: unknown) {
-                logger.error('Failed to play error tone', toneError);
-            }
+        }
+        
+        if (this.phoneController) {
+            await this.phoneController.stop().catch(e => 
+                logger.error('Error stopping phone controller:', e)
+            );
+        }
+        
+        if (this.serviceManager) {
+            await this.serviceManager.shutdown().catch(e => 
+                logger.error('Error stopping service manager:', e)
+            );
+        }
+        
+        if (this.hardwareService) {
+            await this.hardwareService.shutdown().catch(e => 
+                logger.error('Error stopping hardware service:', e)
+            );
         }
     }
+
     public async shutdown(): Promise<void> {
         try {
             logger.info('Shutting down Iroh application...');
             
-            // Stop timer service
-            await this.timerService.stop();
-            
-            // Stop phone controller
-            await this.phoneController.stop();
-            
-            // Stop service manager
-            await this.serviceManager.shutdown();
+            // Stop all services
+            await this.stopServices();
             
             logger.info('Iroh application shutdown complete');
         } catch (error) {
-            logger.error('Error during shutdown:', error as Error);
+            logger.error('Error during shutdown:', error);
             throw error;
         }
     }
@@ -201,7 +250,7 @@ if (require.main === module) {
     });
     
     app.start().catch((error) => {
-        logger.error('Fatal error:', error as Error);
+        logger.error('Fatal error:', error);
         process.exit(1);
     });
 }
