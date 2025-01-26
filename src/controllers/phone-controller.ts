@@ -9,18 +9,18 @@
 // - Hardware monitoring and error recovery
 
 import { EventEmitter } from 'events';
-// Add interface definitions at the top
-interface DiagnosticResult {
-    test: string;
-    passed: boolean;
-    message?: string;
-}
-
-interface ToneOptions {
-    frequency: number;
-    duration: number;
-    level: number;
-}
+import { 
+    PhoneState,
+    DTMFEvent,
+    VoiceEvent,
+    AudioInput,
+    Result,
+    FXSConfig,
+    AudioFormat,
+    DiagnosticResult,
+    ErrorSeverity,
+    HardwareEvent
+} from '../types/core';
 
 import { DAHDIInterface } from '../hardware/dahdi-interface';
 import { DTMFDetector } from '../audio/dtmf-detector';
@@ -31,16 +31,6 @@ import { logger } from '../utils/logger';
 import { ErrorHandler } from '../utils/error-handler';
 import { DAHDIError } from '../types/hardware/dahdi';
 import { AudioError } from '../types/hardware/audio';
-
-import {
-    AudioInput,
-    PhoneControllerConfig,
-    DTMFEvent,
-    VoiceEvent,
-    DAHDIAudioFormat,
-    Result,
-    HardwareError
-} from '../types/hardware/dahdi';
 
 // Phone states based on DAHDI hardware states
 enum PhoneState {

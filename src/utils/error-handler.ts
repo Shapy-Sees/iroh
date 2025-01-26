@@ -3,15 +3,16 @@
 // Centralized error handling system with proper error wrapping,
 // logging, and recovery strategies.
 
+import { 
+    ErrorSeverity,
+    IrohError,
+    Result,
+    ErrorContext,
+    ErrorHandlerEvents
+} from '../types/core';
+
 import { EventEmitter } from 'events';
 import { logger } from './logger';
-import { 
-    IrohError, 
-    HardwareError, 
-    ServiceError, 
-    ensureError,
-    isIrohError
-} from '../types/errors';
 
 // Error severity levels
 export enum ErrorSeverity {

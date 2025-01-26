@@ -4,11 +4,20 @@
 // Initializes and coordinates all core services including the hardware interface,
 // phone controller, and service manager. Handles startup, shutdown, and error recovery.
 
-import { PhoneController, PhoneControllerConfig } from './controllers/phone-controller';
+import { PhoneController } from './controllers/phone-controller';
 import { ServiceManager } from './services/service-manager';
 import { TimerService } from './services/timer/timer-service';
 import { HardwareService } from './services/hardware/hardware-service';
-import { Config, FXSConfig } from './types';
+import { 
+    Config, 
+    FXSConfig, 
+    AppConfig,
+    AIConfig,
+    MusicConfig,
+    HomeConfig,
+    LogConfig,
+    HardwareEvent 
+} from './types/core';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { DAHDI_CONSTANTS } from './core/constants';

@@ -1,32 +1,12 @@
-// src/utils/cache.ts
-//
-// A flexible caching system for storing and retrieving data with expiration.
-// Used throughout the Iroh project for caching AI responses, audio data,
-// and other frequently accessed information to improve performance and
-// reduce API calls.
+import { 
+    CacheOptions,
+    CacheItem,
+    CacheEvents,
+    Result 
+} from '../types/core';
 
 import { EventEmitter } from 'events';
 import { logger } from './logger';
-
-interface CacheOptions {
-    ttl?: number;        // Time to live in milliseconds
-    maxSize?: number;    // Maximum number of items in cache
-    namespace?: string;  // Namespace for the cache instance
-}
-
-interface CacheItem<T> {
-    value: T;
-    expires: number;
-}
-
-interface CacheEvents {
-    set: (data: { key: string; value: any }) => void;
-    hit: (data: { key: string }) => void;
-    delete: (data: { key: string }) => void;
-    clear: () => void;
-    evict: (data: { key: string }) => void;
-    expire: (data: { key: string }) => void;
-}
 
 export class Cache extends EventEmitter {
     private store: Map<string, CacheItem<any>>;

@@ -1,12 +1,9 @@
-// src/utils/success-feedback.ts
-//
-// Key Features:
-// - Success message templates
-// - Context-aware responses
-// - Achievement tracking
-// - Encouraging feedback
-// - Progress celebration
-// - Tea-themed wisdom
+import { 
+    SuccessMessage,
+    SuccessContext,
+    Result,
+    TonePattern 
+} from '../types/core';
 
 import { logger } from './logger';
 import { IrohAIService } from '../services/ai/ai-service';

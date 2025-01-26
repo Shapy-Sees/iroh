@@ -5,6 +5,16 @@
 // Handles audio streaming, phone signaling, DTMF detection, and hardware control
 // through the Linux DAHDI kernel drivers.
 
+import {
+    AudioFormat,
+    AudioInput,
+    Result,
+    FXSConfig,
+    HardwareEvent,
+    DAHDIConfig,
+    DAHDIError
+} from '../types/core';
+
 import { EventEmitter } from 'events';
 import { promises as fs } from 'fs';
 import { FileHandle } from 'fs/promises';
@@ -13,11 +23,8 @@ import { logger } from '../utils/logger';
 import { DAHDIAudioConverter } from './dahdi-audio-converter';
 
 import {
-    DAHDIConfig,
-    DAHDIError,
     DAHDIChannelConfig,
     DAHDIAudioFormat,
-    AudioInput,
     DAHDIIOCtl,
     DAHDIBufferInfo,
     DAHDIChannelStatus,
