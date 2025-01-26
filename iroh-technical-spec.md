@@ -1,16 +1,31 @@
 # Iroh Technical Specification
 
-## Core Architecture
+## Project Overview
 
-The Iroh system is built around these core components:
+Iroh is an AI-powered interface for vintage telephones that provides smart home control, voice interaction, and media playback capabilities. The system integrates with DAHDI hardware to bridge analog telephony with modern digital services.
 
-1. Hardware Layer (DAHDI/FXS Interface)
-2. Audio Processing Pipeline
-3. Core Services (AI, Home Automation, Music)
-4. Phone Controller
-5. Event Bus and State Management
+## System Architecture
 
-### System Overview
+### Core Components
+
+1. Hardware Layer
+   - DAHDI/FXS Interface
+   - Audio Processing Pipeline
+   - Hardware Monitoring
+
+2. Service Layer
+   - AI Service (Claude & ElevenLabs)
+   - Home Assistant Integration
+   - Music Service
+   - Timer Service
+
+3. Control Layer
+   - Phone Controller
+   - Service Manager
+   - Event Bus
+   - State Manager
+
+### Component Relationships
 
 ```mermaid
 graph TD
@@ -27,475 +42,425 @@ graph TD
     StateManager[State Manager] --- ServiceManager
 ```
 
-## Core Service Interfaces
+## Type System
 
-### PhoneController
-
-```typescript
-interface PhoneController {
-  // Lifecycle
-  start(): Promise;
-  stop(): Promise;
-  
-  // Hardware Control
-  playTone(type: string): Promise;
-  playAudio(buffer: Buffer): Promise;
-  ring(duration?: number): Promise;
-  
-  // State
-  getState(): PhoneState;
-  isOpen(): boolean;
-  
-  // Events
-  on(event: 'off_hook', handler: () => void): void;
-  on(event: 'on_hook', handler: () => void): void;
-  on(event: 'dtmf', handler: (event: DTMFEvent) => void): void;
-  on(event: 'voice', handler: (event: VoiceEvent) => void): void;
-  on(event: 'error', handler: (error: Error) => void): void;
-}
-```
-
-### PhoneFeedbackHandler
+### Core Types (src/types/index.ts)
 
 ```typescript
-interface PhoneFeedbackHandler {
-  // Feedback Methods
-  handleError(error: Error, context: any, options?: FeedbackOptions): Promise;
-  provideProgressFeedback(progress: number): Promise;
-  handleRecovery(success: boolean): Promise;
-  
-  // Audio Control
-  playErrorTone(severity: 'low' | 'medium' | 'high' | 'critical'): Promise;
-  interrupt(): void;
-
-  // Events
-  on(event: 'feedback', handler: (data: any) => void): void;
-  on(event: 'interrupt', handler: () => void): void;
+// Base configuration types
+export interface Config {
+    app: AppConfig;
+    audio: AudioConfig;
+    ai: AIConfig;
+    music: MusicConfig;
+    home: HomeConfig;
+    logging: LogConfig;
 }
 
-interface FeedbackOptions {
-  playTones: boolean;
-  useVoice: boolean;
-  waitForCompletion: boolean;
-}
-```
-
-### ServiceManager
-
-```typescript
-interface ServiceManager {
-  // Lifecycle
-  initialize(): Promise<void>;
-  shutdown(): Promise<void>;
-  
-  // Service Access
-  getAIService(): IrohAIService;
-  getHomeAssistant(): HAService;
-  getMusicService(): MusicService;
-  getTimerService(): TimerService;
-  
-  // Command Handling
-  handleCommand(command: string, data?: Buffer): Promise<void>;
-  
-  // State
-  getState(): ServiceState;
-}
-```
-
-### AIService (IrohAIService)
-
-```typescript
-interface IrohAIService {
-  // Text Processing
-  processText(text: string): Promise<string>;
-  processTextStreaming(text: string): Promise<void>;
-  
-  // Speech
-  generateSpeech(text: string): Promise<Buffer>;
-  processVoice(audio: Buffer): Promise<string>;
-  
-  // Context
-  updateContext(key: string, value: any): Promise<void>;
-  
-  // Lifecycle
-  initialize(): Promise<void>;
-  shutdown(): Promise<void>;
-}
-```
-
-### HomeAssistant Service (HAService)
-
-```typescript
-interface HAService {
-  // Core Operations
-  initialize(): Promise<void>;
-  shutdown(): Promise<void>;
-  
-  // Device Control
-  getEntityState(entityId: string): Promise<HAEntity>;
-  executeCommand(command: string, params?: Record<string, any>): Promise<void>;
-  
-  // State
-  getStatus(): { isConnected: boolean; entityCount: number; lastUpdate: Date };
-  
-  // Events
-  on(event: 'state_changed', handler: (event: HAEvent) => void): void;
-}
-```
-
-### Hardware Service
-
-```typescript
-interface HardwareService {
-  // Lifecycle
-  initialize(): Promise<void>;
-  shutdown(): Promise<void>;
-  
-  // Audio
-  playAudio(buffer: Buffer): Promise<void>;
-  
-  // Control
-  ring(duration?: number): Promise<void>;
-  
-  // Diagnostics
-  runDiagnostics(): Promise<Array<{test: string; passed: boolean; message?: string}>>;
-  getStatus(): HardwareStatus;
-  
-  // Audio Processing
-  convertAudioFormat(
-      buffer: Buffer,
-      sourceFormat: DAHDIAudioFormat
-  ): Promise<Buffer>;
-  
-  getAudioFormat(): Readonly<DAHDIAudioFormat>;
-  
-  validateAudioFormat(format: Partial<DAHDIAudioFormat>): void;
-}
-```
-
-### Hardware Interface
-
-```typescript
-interface DAHDIInterface {
-    start(): Promise<void>;
-    stop(): Promise<void>;
-    playAudio(buffer: Buffer, format?: Partial<DAHDIAudioFormat>): Promise<void>;
-    ring(duration?: number): Promise<void>;
-    getStatus(): DAHDIChannelStatus | null;
-    isOpen(): boolean;
-    getLastError(): Error | null;
-}
-```
-
-## Audio Processing Architecture
-
-The system implements a robust audio processing pipeline centered around DAHDI's requirements. The core audio processing is handled by two key components:
-
-### DAHDIAudioConverter
-
-The audio conversion system provides format compatibility between modern audio sources and DAHDI's specific requirements through a combination of native JavaScript processing and the Web Audio API's AudioBuffer interface. It handles:
-
-```typescript
-
-interface DAHDITypes {
-  // Hardware Configuration
-  interface DAHDIConfig {
-    devicePath: string;
-    controlPath: string;
-    sampleRate: 8000; // Must be 8000Hz
-    channels: 1;      // Must be mono
-    bitDepth: 16;     // Must be 16-bit
-    bufferSize: number;
-    channel: number;
-    monitorInterval?: number;
-  }
-
-  // Audio Format
-  interface DAHDIAudioFormat {
-    sampleRate: 8000;    // DAHDI requires 8kHz
-    channels: 1;         // DAHDI is mono only
-    bitDepth: 16;        // DAHDI uses 16-bit PCM
-    format: 'linear';    // Linear PCM format
-  }
-
-  // Channel Configuration
-  interface DAHDIChannelConfig {
-    channel: number;
-    signaling: 'fxs_ls' | 'fxs_gs' | 'fxs_ks';
-    echocancel?: {
-      enabled: boolean;
-      taps: number;
-    };
-    callerid?: {
-      enabled: boolean;
-      format: 'bell' | 'v23' | 'dtmf';
-    };
-    impedance: 600 | 900;
-  }
-
-  // Status & Events
-  interface DAHDIChannelStatus {
-    isOpen: boolean;
-    channel: number;
-    alarms: number;
-    signaling: {
-      type: string;
-      hookstate: 'onhook' | 'offhook';
-      ringing: boolean;
-    };
-    levels?: {
-      rxLevel: number;
-      txLevel: number;
-    };
-  }
-}
-interface AudioConverterOptions {
-    bufferSize: number;
-    useWorkers: boolean;
+export interface AppConfig {
+    name: string;
+    env: 'development' | 'production' | 'test';
+    port: number;
+    dataDir?: string;
 }
 
-```
-
-The converter uses the Web Audio API's AudioBuffer for format handling and implements custom resampling logic. This provides:
-- Standards-compliant audio processing
-- Efficient memory management
-- High-quality channel mixing
-- Real-time processing capability
-- Minimal audio quality loss during conversion
-
-### Audio Processing Pipeline
-
-The audio path flows through these stages:
-
-```mermaid
-graph TD
-    Input[Audio Input] --> Format[Format Detection]
-    Format --> Convert[Format Conversion]
-    Convert --> DAHDI[DAHDI Interface]
-    DAHDI --> Hardware[FXS Hardware]
-```
-
-1. Input Processing
-   - Format detection and validation
-   - Buffer size calculation
-   - Channel count verification
-   - AudioBuffer conversion
-
-2. Format Conversion
-   - Linear interpolation resampling to 8kHz
-   - AudioBuffer-based channel mixing to mono
-   - 16-bit PCM conversion
-   - Buffer management
-
-3. DAHDI Output
-   - Hardware timing synchronization
-   - Buffer underrun prevention
-   - Error recovery
-
-
-
-## Core Types
-
-### Audio Types
-
-```typescript
-interface AudioInput {
-  sampleRate: number;
-  channels: number;
-  bitDepth: number;
-  data: Buffer;
+// Hardware configuration
+export interface AudioConfig {
+    sampleRate: 8000;  // DAHDI requires 8kHz
+    channels: 1;       // DAHDI requires mono
+    bitDepth: 16;      // DAHDI requires 16-bit
+    vadThreshold: number;
+    silenceThreshold: number;
+    bufferSize?: number;
 }
 
-interface DTMFEvent {
-  digit: string;
-  duration: number;
-  timestamp: number;
-}
-
-interface VoiceEvent {
-  audio: Buffer;
-  startTime: number;
-  endTime: number;
-  isFinal: boolean;
-}
-```
-
-### State Types
-
-```typescript
-interface ServiceState {
-  isInitialized: boolean;
-  activeServices: string[];
-  lastError?: Error;
-}
-
-interface HardwareStatus {
-  isInitialized: boolean;
-  dahdiStatus: {
-    isOpen: boolean;
-    lastError?: Error;
-    channelStatus: DAHDIChannelStatus | null;
-  };
-  systemHealth: {
+// Service configurations
+export interface AIConfig {
+    anthropicKey: string;
+    elevenLabsKey?: string;
+    openAIKey?: string;
+    maxTokens?: number;
     temperature?: number;
-    voltages: Record<string, number>;
-    errors: number;
-  };
+    voiceId?: string;
 }
 
-type PhoneState = 'idle' | 'off_hook' | 'ringing' | 'in_call' | 'error';
-```
-
-### Configuration Types
-
-```typescript
-interface Config {
-  app: AppConfig;
-  audio: AudioConfig;
-  ai: AIConfig;
-  music: MusicConfig;
-  home: HomeConfig;
-  logging: LogConfig;
+export interface MusicConfig {
+    spotifyClientId?: string;
+    spotifyClientSecret?: string;
+    appleMusicKey?: string;
 }
 
-interface DAHDIConfig {
-  devicePath: string;
-  sampleRate: number; // Must be 8000
-  channel?: {
-    number: number;
-    ringCadence: number[];
-    callerIdFormat: 'bell' | 'v23' | 'dtmf';
-    impedance: 600 | 900;
-  };
-}
-interface AIServiceConfig {
-  anthropicKey: string;        // Required
-  elevenLabsKey?: string;     // Optional
-  openAIKey?: string;         // Optional
-  maxTokens?: number;
-  temperature?: number;
-  voiceId?: string;
+export interface HomeConfig {
+    url: string;
+    token: string;
+    entityPrefix?: string;
+    updateInterval?: number;
 }
 
-interface PhoneControllerConfig {
-  fxs: {
-    devicePath: string;
-    sampleRate: number;
-    impedance?: number;
-  };
-  audio: {
-    bufferSize: number;
-    channels: number;
-    bitDepth: number;
-    vadThreshold?: number;
-  };
-  ai?: AIServiceConfig;
-  dtmf?: {
-    minDuration: number;
-    threshold: number;
-  };
+export interface LogConfig {
+    level: 'debug' | 'info' | 'warn' | 'error';
+    directory: string;
+    maxFiles: string;
+    maxSize: string;
+    console?: boolean;
 }
 
+// Controller configuration
+export interface PhoneControllerConfig {
+    fxs: {
+        devicePath: string;
+        sampleRate: 8000;
+        impedance?: number;
+    };
+    audio: {
+        bufferSize: number;
+        channels: 1;
+        bitDepth: 16;
+        vadThreshold?: number;
+    };
+    ai?: {
+        model?: string;
+        apiKey?: string;
+        temperature?: number;
+    };
+}
 
-```
+// Service status tracking
+export interface ServiceStatus {
+    isInitialized: boolean;
+    isHealthy: boolean;
+    lastError?: Error;
+    metrics: {
+        uptime: number;
+        errors: number;
+        warnings: number;
+        lastChecked?: Date;
+    };
+}
 
-### Error Types
-
-Audio-specific error type:
-```typescript
-export class AudioFormatError extends Error {
-    constructor(
-        message: string,
-        public readonly details: string[]
-    ) {
+// Error types
+export class IrohError extends Error {
+    constructor(message: string, public code: string) {
         super(message);
-        this.name = 'AudioFormatError';
+        this.name = 'IrohError';
+    }
+}
+
+export class HardwareError extends IrohError {
+    constructor(message: string) {
+        super(message, 'HARDWARE_ERROR');
+        this.name = 'HardwareError';
+    }
+}
+
+export class ServiceError extends IrohError {
+    constructor(message: string) {
+        super(message, 'SERVICE_ERROR');
+        this.name = 'ServiceError';
     }
 }
 ```
 
-### Utility Types
+### Hardware Types (src/types/hardware/dahdi.ts)
 
 ```typescript
-interface CircularBufferOptions {
-    size: number;
-    overwrite?: boolean;
+export interface DAHDIConfig {
+    devicePath: string;
+    controlPath: string;
+    sampleRate: 8000;  // Required by DAHDI
+    channels: 1;       // Required by DAHDI
+    bitDepth: 16;      // Required by DAHDI
+    bufferSize: number;
+    channel: number;
+    monitorInterval?: number;
 }
 
-class CircularBuffer {
-    write(data: Buffer): number;
-    read(size: number): Buffer;
-    clear(): void;
-    getSize(): number;
+export interface DAHDIChannelConfig {
+    channel: number;
+    signaling: 'fxs_ls' | 'fxs_gs' | 'fxs_ks';
+    echocancel?: {
+        enabled: boolean;
+        taps: number;
+    };
+    callerid?: {
+        enabled: boolean;
+        format: 'bell' | 'v23' | 'dtmf';
+    };
+    impedance: 600 | 900;
+}
+
+export interface DAHDIAudioFormat {
+    sampleRate: 8000;
+    channels: 1;
+    bitDepth: 16;
+    format: 'linear';
+}
+
+export interface DAHDIChannelStatus {
+    isOpen: boolean;
+    channel: number;
+    alarms: number;
+    signaling: {
+        type: string;
+        hookstate: 'onhook' | 'offhook';
+        ringing: boolean;
+    };
+    levels?: {
+        rxLevel: number;
+        txLevel: number;
+    };
 }
 ```
 
-## Event System
-
-The system uses a centralized event bus with typed events:
+### Audio Types (src/types/audio/index.ts)
 
 ```typescript
-interface SystemEvents {
-  'system:ready': void;
-  'system:error': Error;
-  'system:shutdown': void;
+export interface AudioInput {
+    sampleRate: number;
+    channels: number;
+    bitDepth: number;
+    data: Buffer;
 }
 
-interface PhoneEvents {
-  'phone:offHook': void;
-  'phone:onHook': void;
-  'phone:dtmf': { digit: string; duration: number };
-  'phone:voice': { audio: Buffer; duration: number };
+export interface AudioOutput {
+    sampleRate: number;
+    channels: number;
+    bitDepth: number;
+    data: Buffer;
+    metadata?: Record<string, any>;
 }
 
-interface HomeEvents {
-  'home:deviceChange': { deviceId: string; state: any };
-  'home:sceneActivated': { sceneId: string };
+export interface DTMFEvent {
+    digit: string;
+    duration: number;
+    timestamp: number;
+    strength?: number;
 }
 
-type IrohEvents = SystemEvents & PhoneEvents & HomeEvents;
+export interface VoiceEvent {
+    audio: Buffer;
+    startTime: number;
+    endTime: number;
+    isFinal: boolean;
+    confidence?: number;
+}
 ```
 
+### Service Types (src/types/services/index.ts)
 
-## Implementation Notes
+```typescript
+export interface AIService {
+    initialize(): Promise<void>;
+    processText(text: string): Promise<string>;
+    processVoice(audioBuffer: Buffer): Promise<string>;
+    generateSpeech(text: string): Promise<Buffer>;
+    updateContext(key: string, value: any): Promise<void>;
+    shutdown(): Promise<void>;
+}
 
-1. DAHDI Integration
-   - All audio must use 8kHz sample rate, mono, 16-bit PCM
-   - Buffer sizes should be multiples of 160 bytes (20ms frames)
-   - Echo cancellation should be configured for 128 taps
+export interface MusicService {
+    executeCommand(command: string): Promise<void>;
+    play(query: string): Promise<void>;
+    pause(): Promise<void>;
+    next(): Promise<void>;
+    previous(): Promise<void>;
+    setVolume(level: number): Promise<void>;
+    getStatus(): Promise<MusicStatus>;
+}
 
-2. Error Handling
-   - All services should emit typed errors
-   - Hardware errors should trigger recovery attempts
-   - State changes should be atomic
+export interface HomeService {
+    initialize(): Promise<void>;
+    executeCommand(command: string): Promise<void>;
+    getEntityState(entityId: string): Promise<HAEntity>;
+    getStatus(): Promise<HAStatus>;
+    shutdown(): Promise<void>;
+}
+```
 
-3. Logging
-   - Use Winston logger throughout
-   - Log levels: error, warn, info, debug
-   - Include context in structured logs
+## Service Implementation Requirements
 
-4. Audio Processing
-   - All audio must be converted to 8kHz/16-bit/mono format
-   - Use node-libsamplerate for sample rate conversion
-   - Implement proper buffer management for real-time audio
-   - Monitor conversion quality and performance
-   - Log format conversion operations for debugging
+### Hardware Layer
 
-5. Error Handling
-   - Add specific handling for audio format errors
-   - Implement fallbacks for conversion failures
-   - Monitor conversion performance impact
-   - Provide detailed error information for debugging
+1. DAHDI Interface
+   - Must handle all direct communication with DAHDI drivers
+   - Manages audio format conversion to/from DAHDI requirements
+   - Provides hardware status monitoring and diagnostics
+   - Implements error recovery for hardware failures
 
+2. Audio Pipeline
+   - Handles all audio processing in DAHDI-compatible format
+   - Implements DTMF detection using Goertzel algorithm
+   - Provides voice activity detection
+   - Manages audio buffering and streaming
+
+### Service Layer
+
+1. AI Service
+   - Handles all interactions with Claude API
+   - Manages conversation context and state
+   - Coordinates with ElevenLabs for speech synthesis
+   - Implements streaming response handling
+
+2. Home Assistant Service
+   - Maintains connection to Home Assistant instance
+   - Handles device state tracking and updates
+   - Manages scene activation and device control
+   - Implements state caching for performance
+
+3. Music Service
+   - Handles music service integration (Spotify/Apple Music)
+   - Manages playback state and control
+   - Implements audio streaming to DAHDI
+   - Provides playlist and queue management
+
+### Control Layer
+
+1. Phone Controller
+   - Manages phone state (hook, ringing, etc.)
+   - Coordinates audio routing
+   - Handles command processing
+   - Provides user feedback
+
+2. Service Manager
+   - Coordinates between services
+   - Manages service lifecycle
+   - Handles cross-service operations
+   - Provides centralized error handling
+
+## Error Handling Strategy
+
+### Error Types
+
+1. Hardware Errors
+   - DAHDI device errors
+   - Audio format errors
+   - Buffer overruns/underruns
+   - Hardware timing errors
+
+2. Service Errors
+   - API failures
+   - Authentication errors
+   - Timeout errors
+   - State synchronization errors
+
+3. System Errors
+   - Configuration errors
+   - Initialization failures
+   - Resource exhaustion
+   - Critical failures
+
+### Error Recovery Process
+
+1. Error Detection
+   - Monitor hardware status
+   - Track service health
+   - Validate state transitions
+   - Check resource usage
+
+2. Recovery Strategy
+   - Hardware reset/reinitialize
+   - Service restart
+   - State restoration
+   - User notification
+
+3. Failure Handling
+   - Graceful degradation
+   - Safe state maintenance
+   - User feedback
+   - Error logging
+
+## Logging Requirements
+
+Every component must implement comprehensive logging:
+
+1. Log Levels
+   - ERROR: System failures and errors
+   - WARN: Potential issues and degraded operations
+   - INFO: Major state changes and operations
+   - DEBUG: Detailed operational information
+
+2. Log Format
+   ```typescript
+   {
+       timestamp: string;
+       level: 'error' | 'warn' | 'info' | 'debug';
+       component: string;
+       message: string;
+       details?: Record<string, any>;
+       error?: Error;
+   }
+   ```
+
+3. Log Rotation
+   - Daily rotation
+   - 14-day retention
+   - Size-based rotation (20MB max)
+   - Compression of old logs
+
+## Testing Requirements
+
+Each component must include:
+
+1. Unit Tests
+   - Core functionality
+   - Edge cases
+   - Error handling
+   - State management
+
+2. Integration Tests
+   - Service interactions
+   - Hardware integration
+   - Error recovery
+   - Performance tests
+
+3. System Tests
+   - End-to-end scenarios
+   - Load testing
+   - Recovery testing
+   - Long-running stability tests
 
 ## Development Process
 
-1. Start with core types and interfaces
-2. Implement hardware layer
-3. Build service implementations
-4. Add controllers and event handling
-5. Integrate all components
+1. Code Organization
+   ```
+   src/
+     ├── types/          # Type definitions
+     ├── hardware/       # Hardware interfaces
+     ├── services/       # Service implementations
+     ├── controllers/    # System controllers
+     ├── utils/          # Shared utilities
+     ├── config/         # Configuration
+     └── tests/          # Test suites
+   ```
 
-This specification serves as the authoritative reference for the entire system. All implementations should conform to these interfaces and types.
+2. Build Process
+   - TypeScript compilation
+   - Linting and formatting
+   - Test execution
+   - Documentation generation
 
-Let me know if you'd like me to focus on implementing any specific part of this specification or if you need clarification on any section.
+3. Deployment
+   - Docker container build
+   - Configuration validation
+   - Health checks
+   - Monitoring setup
+
+## Future Considerations
+
+1. Scalability
+   - Multiple phone support
+   - Distributed deployment
+   - Load balancing
+   - Service redundancy
+
+2. Security
+   - API key management
+   - Access control
+   - Audit logging
+   - Secure communication
+
+3. Extensibility
+   - Plugin system
+   - Custom service integration
+   - Command customization
+   - Voice model selection

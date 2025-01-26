@@ -7,12 +7,18 @@
 
 import { EventEmitter } from 'events';
 import { DAHDIInterface } from '../../hardware/dahdi-interface';
-import { DAHDIAudioFormat, AudioFormatError } from '../../types/dahdi';
 import { logger } from '../../utils/logger';
+import {
+    DAHDIConfig,
+    DAHDIChannelStatus,
+    DAHDIChannelConfig,
+    ServiceStatus,
+    Result,
+    HardwareError
+} from '../../types';
 
-// Updated to match spec exactly
-interface HardwareStatus {
-    isInitialized: boolean;
+// Hardware Service Status interface using the new consolidated types
+interface HardwareStatus extends ServiceStatus {
     dahdiStatus: {
         isOpen: boolean;
         lastError?: Error;
@@ -33,12 +39,6 @@ export class HardwareService extends EventEmitter {
     private status: HardwareStatus;
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private readonly HEALTH_CHECK_INTERVAL = 60000; // 1 minute
-    private readonly DAHDI_FORMAT: DAHDIAudioFormat = {
-        sampleRate: 8000,
-        channels: 1,
-        bitDepth: 16,
-        format: 'linear'
-    };
 
     constructor(config: DAHDIConfig) {
         super();
@@ -48,6 +48,13 @@ export class HardwareService extends EventEmitter {
         // Initialize status with proper typing
         this.status = {
             isInitialized: false,
+            isHealthy: false,
+            metrics: {
+                uptime: 0,
+                errors: 0,
+                warnings: 0,
+                lastChecked: new Date()
+            },
             dahdiStatus: {
                 isOpen: false,
                 channelStatus: null
@@ -79,11 +86,13 @@ export class HardwareService extends EventEmitter {
             logger.error('DAHDI interface error:', error);
             this.status.dahdiStatus.lastError = error;
             this.status.systemHealth.errors++;
+            this.status.metrics.errors++;
             this.emit('hardware_error', error);
         });
 
         this.dahdi.on('ready', () => {
             this.status.dahdiStatus.isOpen = true;
+            this.status.isHealthy = true;
             this.emit('hardware_ready');
         });
 
@@ -98,7 +107,7 @@ export class HardwareService extends EventEmitter {
         });
     }
 
-    public async initialize(): Promise<void> {
+    public async initialize(): Promise<Result<void>> {
         try {
             logger.info('Initializing hardware service');
 
@@ -108,66 +117,31 @@ export class HardwareService extends EventEmitter {
             // Run initial diagnostics
             const diagnostics = await this.runDiagnostics();
             if (!diagnostics.every(test => test.passed)) {
-                throw new Error('Hardware diagnostics failed');
+                throw new HardwareError('Hardware diagnostics failed');
             }
 
             // Start health monitoring
             this.startHealthMonitoring();
 
             this.status.isInitialized = true;
+            this.status.isHealthy = true;
             logger.info('Hardware service initialized successfully');
+            
+            return { success: true, data: undefined };
             
         } catch (error) {
             logger.error('Failed to initialize hardware service:', error);
-            throw error;
+            return { 
+                success: false, 
+                error: error instanceof Error ? error : new Error(String(error))
+            };
         }
     }
 
-    public async validateAudioFormat(format: Partial<DAHDIAudioFormat>): void {
-        const errors: string[] = [];
-        
-        if (format.sampleRate !== 8000) {
-            errors.push('Sample rate must be 8000Hz for DAHDI');
-        }
-        if (format.channels !== 1) {
-            errors.push('DAHDI only supports mono audio');
-        }
-        if (format.bitDepth !== 16) {
-            errors.push('DAHDI requires 16-bit PCM');
-        }
-
-        if (errors.length > 0) {
-            throw new AudioFormatError('Invalid audio format for DAHDI', errors);
-        }
-    }
-
-    public async playAudio(buffer: Buffer): Promise<void> {
-        try {
-            // Ensure format meets DAHDI requirements
-            await this.validateAudioFormat(this.DAHDI_FORMAT);
-            
-            await this.dahdi.playAudio(buffer);
-            logger.debug('Audio played successfully', { bufferSize: buffer.length });
-            
-        } catch (error) {
-            logger.error('Error playing audio:', error);
-            throw error;
-        }
-    }
-
-    public async convertAudioFormat(
-        buffer: Buffer,
-        sourceFormat: Partial<DAHDIAudioFormat>
-    ): Promise<Buffer> {
-        // Implementation of format conversion
-        // This would use the DAHDIAudioConverter
-        throw new Error('Not implemented');
-    }
-
-    public async runDiagnostics(): Promise<Array<{ 
-        test: string; 
-        passed: boolean; 
-        message?: string 
+    public async runDiagnostics(): Promise<Array<{
+        test: string;
+        passed: boolean;
+        message?: string;
     }>> {
         logger.info('Running hardware diagnostics');
         const results = [];
@@ -178,8 +152,8 @@ export class HardwareService extends EventEmitter {
                 test: 'DAHDI Interface',
                 passed: this.dahdi.isOpen(),
                 message: this.dahdi.isOpen() ? 
-                    'DAHDI interface is active' : 
-                    'DAHDI interface is not active'
+                    'DAHDI interface active' : 
+                    'DAHDI interface inactive'
             });
 
             // Test FXS voltage
@@ -201,10 +175,10 @@ export class HardwareService extends EventEmitter {
         }
     }
 
-    private async testAudioPath(): Promise<{ 
-        test: string; 
-        passed: boolean; 
-        message: string 
+    private async testAudioPath(): Promise<{
+        test: string;
+        passed: boolean;
+        message: string;
     }> {
         try {
             // Generate and play test tone
@@ -264,11 +238,21 @@ export class HardwareService extends EventEmitter {
             if (lastError) {
                 this.status.dahdiStatus.lastError = lastError;
                 this.status.systemHealth.errors++;
+                this.status.metrics.errors++;
             }
+
+            // Update metrics
+            this.status.metrics.lastChecked = new Date();
+            this.status.metrics.uptime = process.uptime();
+
+            // Update overall health status
+            this.status.isHealthy = this.status.systemHealth.errors === 0 && 
+                                  this.status.dahdiStatus.isOpen;
 
         } catch (error) {
             logger.error('Health check failed:', error);
             this.status.systemHealth.errors++;
+            this.status.metrics.errors++;
             this.emit('health_error', error);
         }
     }
@@ -294,6 +278,7 @@ export class HardwareService extends EventEmitter {
             await this.dahdi.stop();
 
             this.status.isInitialized = false;
+            this.status.isHealthy = false;
             this.status.dahdiStatus.isOpen = false;
 
             // Clean up event listeners

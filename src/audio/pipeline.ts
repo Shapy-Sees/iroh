@@ -1,26 +1,45 @@
 // src/audio/pipeline.ts
 //
-// Our audio pipeline manages the flow of audio data through the system.
-// It coordinates between different audio processing components like
-// DTMF detection and voice activity detection, handling the routing
-// and processing of audio from DAHDI through our various detectors
-// and analysis components.
+// Audio pipeline that manages the flow of audio data through the system.
+// Coordinates between different audio processing components including:
+// - DTMF detection for telephone keypad input
+// - Voice activity detection for speech commands
+// - Audio format conversion for DAHDI compatibility
+// - Event routing and handling
+// Maintains type safety and proper error handling throughout the pipeline.
 
 import { EventEmitter } from 'events';
-import { AudioInput, DTMFEvent, VoiceEvent, AudioEventHandler } from './types';
+import { 
+    AudioInput, 
+    AudioOutput,
+    DTMFEvent, 
+    VoiceEvent,
+    ServiceStatus,
+    Result,
+    EventHandler
+} from '../types';
 import { DTMFDetector } from './dtmf-detector';
 import { VoiceDetector } from './voice-detector';
 import { logger } from '../utils/logger';
 
+// Pipeline status tracking
+interface PipelineStatus extends ServiceStatus {
+    isProcessing: boolean;
+    processedFrames: number;
+    droppedFrames: number;
+    lastProcessingTime: number;
+}
+
 export class AudioPipeline extends EventEmitter {
     private dtmfDetector: DTMFDetector;
     private voiceDetector: VoiceDetector;
-    private isProcessing: boolean = false;
-    private handlers: Map<string, AudioEventHandler[]> = new Map();
+    private status: PipelineStatus;
+    private handlers: Map<string, EventHandler[]>;
 
     constructor() {
         super();
-        // Initialize our audio processing components with DAHDI-compatible settings
+        
+        // Initialize with DAHDI-compatible settings
         const dahdiSettings = {
             sampleRate: 8000,    // DAHDI uses 8kHz sampling
             channels: 1,         // Mono audio
@@ -40,43 +59,68 @@ export class AudioPipeline extends EventEmitter {
             silenceThreshold: 500 // 500ms silence to end segment
         });
 
+        // Initialize status tracking
+        this.status = {
+            isInitialized: false,
+            isHealthy: true,
+            isProcessing: false,
+            processedFrames: 0,
+            droppedFrames: 0,
+            lastProcessingTime: 0,
+            metrics: {
+                uptime: 0,
+                errors: 0,
+                warnings: 0,
+                lastChecked: new Date()
+            }
+        };
+
+        this.handlers = new Map();
+        
         // Set up internal event handlers
         this.setupEventHandlers();
         
+        this.status.isInitialized = true;
         logger.info('Audio pipeline initialized', { settings: dahdiSettings });
     }
 
     private setupEventHandlers(): void {
         // Handle DTMF detection events
-        this.dtmfDetector.on('dtmf', async (event) => {
+        this.dtmfDetector.on('dtmf', async (event: DTMFEvent) => {
             try {
                 await this.handleDTMF(event);
             } catch (error) {
+                this.status.metrics.errors++;
                 logger.error('Error handling DTMF event:', error);
                 this.emit('error', error);
             }
         });
 
         // Handle voice detection events
-        this.voiceDetector.on('voice', async (event) => {
+        this.voiceDetector.on('voice', async (event: VoiceEvent) => {
             try {
                 await this.handleVoice(event);
             } catch (error) {
+                this.status.metrics.errors++;
                 logger.error('Error handling voice event:', error);
                 this.emit('error', error);
             }
         });
     }
 
-    public async processAudio(input: AudioInput): Promise<void> {
+    public async processAudio(input: AudioInput): Promise<Result<void>> {
         // Check if we're already processing a frame
-        if (this.isProcessing) {
-            logger.warn('Audio pipeline is busy, dropping frame');
-            return;
+        if (this.status.isProcessing) {
+            this.status.droppedFrames++;
+            logger.warn('Audio pipeline is busy, dropping frame', {
+                droppedFrames: this.status.droppedFrames
+            });
+            return { success: true, data: undefined };
         }
 
+        const startTime = Date.now();
         try {
-            this.isProcessing = true;
+            this.status.isProcessing = true;
             logger.debug('Processing audio frame', {
                 length: input.data.length,
                 sampleRate: input.sampleRate
@@ -87,7 +131,7 @@ export class AudioPipeline extends EventEmitter {
             if (dtmfResult) {
                 logger.debug('DTMF detected', { digit: dtmfResult.digit });
                 await this.handleDTMF(dtmfResult);
-                return; // Skip voice processing if DTMF detected
+                return { success: true, data: undefined };
             }
 
             // If no DTMF, process for voice
@@ -99,12 +143,18 @@ export class AudioPipeline extends EventEmitter {
                 await this.handleVoice(voiceResult);
             }
 
+            this.status.processedFrames++;
+            return { success: true, data: undefined };
+
         } catch (error) {
+            this.status.metrics.errors++;
             const err = error instanceof Error ? error : new Error(String(error));
             logger.error('Error processing audio:', err);
             this.emit('error', err);
+            return { success: false, error: err };
         } finally {
-            this.isProcessing = false;
+            this.status.isProcessing = false;
+            this.status.lastProcessingTime = Date.now() - startTime;
         }
     }
 
@@ -122,6 +172,7 @@ export class AudioPipeline extends EventEmitter {
             // Emit DTMF event for other listeners
             this.emit('dtmf', event);
         } catch (error) {
+            this.status.metrics.errors++;
             logger.error('Error in DTMF handler:', error);
             this.emit('error', error);
         }
@@ -143,12 +194,13 @@ export class AudioPipeline extends EventEmitter {
             // Emit voice event for other listeners
             this.emit('voice', event);
         } catch (error) {
+            this.status.metrics.errors++;
             logger.error('Error in voice handler:', error);
             this.emit('error', error);
         }
     }
 
-    public addHandler(eventType: 'dtmf' | 'voice', handler: AudioEventHandler): void {
+    public addHandler(eventType: 'dtmf' | 'voice', handler: EventHandler): void {
         logger.debug('Adding audio handler', { eventType });
         
         // Get or create handler array for this event type
@@ -157,7 +209,7 @@ export class AudioPipeline extends EventEmitter {
         this.handlers.set(eventType, handlers);
     }
 
-    public removeHandler(eventType: 'dtmf' | 'voice', handler: AudioEventHandler): void {
+    public removeHandler(eventType: 'dtmf' | 'voice', handler: EventHandler): void {
         logger.debug('Removing audio handler', { eventType });
         
         const handlers = this.handlers.get(eventType);
@@ -173,6 +225,13 @@ export class AudioPipeline extends EventEmitter {
         return this.handlers.get(eventType)?.length || 0;
     }
 
+    public getStatus(): PipelineStatus {
+        // Update uptime
+        this.status.metrics.uptime = process.uptime();
+        this.status.metrics.lastChecked = new Date();
+        return { ...this.status };
+    }
+
     public async shutdown(): Promise<void> {
         logger.info('Shutting down audio pipeline');
         
@@ -184,6 +243,10 @@ export class AudioPipeline extends EventEmitter {
             // Clear all handlers and listeners
             this.handlers.clear();
             this.removeAllListeners();
+
+            // Update status
+            this.status.isInitialized = false;
+            this.status.isHealthy = false;
 
             logger.info('Audio pipeline shutdown complete');
         } catch (error) {
