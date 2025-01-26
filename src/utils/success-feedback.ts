@@ -8,6 +8,9 @@
 // - Progress celebration
 // - Tea-themed wisdom
 
+import { logger } from './logger';
+import { IrohAIService } from '../services/ai/ai-service';
+
 interface SuccessMessage {
     message: string;
     celebration?: string;
@@ -250,21 +253,16 @@ export class PhoneController {
         }
     }
 
-    // Example usage
-    public async executeCommand(command: string): Promise<void> {
-        try {
-            // Execute command logic here
-            // ...
-
-            // On success
-            await this.handleCommandSuccess(command);
-            
-        } catch (error) {
-            // Handle error with error feedback system
-            await this.feedbackHandler.handleError(error, {
-                component: 'command',
-                command
-            });
-        }
+    private async playAudio(audio: AudioBuffer): Promise<void> {
+        // Implement audio playback logic here
+        // This is a placeholder implementation
+        console.log('Playing audio');
     }
+
+    private async playTone(frequency: number, duration: number): Promise<void> {
+        // Implement tone generation logic here
+        // This is a placeholder implementation
+        console.log(`Playing tone at ${frequency}Hz for ${duration}ms`);
+    }
+
 }

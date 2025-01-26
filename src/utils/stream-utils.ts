@@ -13,6 +13,8 @@
 // buffer.on('full', processBuffer);
 
 import { Transform, TransformOptions } from 'stream';
+import { logger } from './logger';
+import { EventEmitter } from 'events';
 
 export class AudioStreamBuffer extends Transform {
     private buffer: Buffer[];

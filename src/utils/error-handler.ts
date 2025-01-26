@@ -5,7 +5,13 @@
 
 import { EventEmitter } from 'events';
 import { logger } from './logger';
-import { IrohError, HardwareError, ServiceError, ensureError } from '../types/errors';
+import { 
+    IrohError, 
+    HardwareError, 
+    ServiceError, 
+    ensureError,
+    isIrohError
+} from '../types/errors';
 
 // Error severity levels
 export enum ErrorSeverity {
@@ -24,13 +30,25 @@ export interface ErrorContext {
     metadata?: Record<string, any>;
 }
 
+// Add type-safe event definitions
+interface ErrorHandlerEvents {
+    error: (data: { error: Error; context: ErrorContext }) => void;
+    criticalError: (data: { error: Error; context: ErrorContext }) => void;
+    errorHandlingFailed: (data: { 
+        originalError: Error; 
+        handlingError: Error 
+    }) => void;
+}
+
 export class ErrorHandler extends EventEmitter {
     private static instance: ErrorHandler;
-    private retryCount: Map<string, number> = new Map();
-    private readonly maxRetries = 3;
+    private retryCount: Map<string, number>;
+    private readonly maxRetries: number;
 
     private constructor() {
         super();
+        this.retryCount = new Map();
+        this.maxRetries = 3;
         this.setupGlobalHandlers();
     }
 
@@ -57,6 +75,21 @@ export class ErrorHandler extends EventEmitter {
                 severity: ErrorSeverity.HIGH
             });
         });
+    }
+
+    // Type-safe event emitter
+    public on<K extends keyof ErrorHandlerEvents>(
+        event: K,
+        listener: ErrorHandlerEvents[K]
+    ): this {
+        return super.on(event, listener);
+    }
+
+    public emit<K extends keyof ErrorHandlerEvents>(
+        event: K,
+        data: Parameters<ErrorHandlerEvents[K]>[0]
+    ): boolean {
+        return super.emit(event, data);
     }
 
     public async handleError(error: unknown, context: ErrorContext): Promise<void> {
@@ -114,10 +147,16 @@ export class ErrorHandler extends EventEmitter {
     }
 
     private async handleCriticalError(error: Error, context: ErrorContext): Promise<void> {
+        const errorData = isIrohError(error) 
+            ? { code: error.code, timestamp: error.timestamp }
+            : { code: 'UNKNOWN_ERROR' };
+
         logger.error('Critical error detected:', {
-            error,
+            error: errorData,
             context
         });
+
+        this.emit('criticalError', { error, context });
 
         // Notify monitoring systems
         this.emit('criticalError', { error, context });

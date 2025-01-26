@@ -1,5 +1,6 @@
+// src/types/hardware/audio.ts
+
 import { Buffer } from 'buffer';
-import { HardwareError } from '../core';
 
 export interface AudioConfig {
     sampleRate: 8000;
@@ -56,4 +57,4 @@ export class AudioFormatError extends AudioError {
     constructor(message: string, details?: string[]) {
         super(message, { invalidFormats: details });
     }
-} 
+}

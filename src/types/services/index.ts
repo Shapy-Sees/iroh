@@ -1,3 +1,5 @@
+// src/types/services/index.ts
+
 export * from './ai';
 export * from './home';
 export * from './music';

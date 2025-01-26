@@ -1,10 +1,9 @@
-// src/types/dahdi.ts
+// src/types/hardware/dahdi.ts
 //
 // Type definitions for DAHDI (Digium Asterisk Hardware Device Interface)
 // Contains all the core types needed for DAHDI hardware interaction
 
 import { Buffer } from 'buffer';
-import { HardwareError } from '../core';
 
 // Core DAHDI configuration interface
 export interface DAHDIConfig {

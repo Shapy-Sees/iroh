@@ -60,6 +60,20 @@ export interface ServiceStatus {
     };
 }
 
+export interface LogMetadata {
+    message?: string;
+    component?: string;
+    error?: {
+        message: string;
+        name: string;
+        stack?: string;
+        code?: string;
+    };
+    context?: Record<string, unknown>;
+    [key: string]: unknown;  // Allow additional properties
+}
+
+
 // Re-export all types
 export * from './hardware/dahdi';
 export * from './hardware/fxs';

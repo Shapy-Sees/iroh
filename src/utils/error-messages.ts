@@ -58,10 +58,64 @@ const ERROR_MESSAGES: Record<string, Record<ErrorSeverity, ErrorMessage[]>> = {
         ]
     },
     service: {
-        // ... similar structure for service errors
+        [ErrorSeverity.LOW]: [
+            {
+                message: "Our service is experiencing a minor hiccup, like a small ripple in a calm tea pond.",
+                suggestion: "Let's give it another moment.",
+                teaMetaphor: "Even the smallest leaf can create ripples in still water."
+            }
+        ],
+        [ErrorSeverity.MEDIUM]: [
+            {
+                message: "Our service needs a brief pause, like tea that needs more steeping time.",
+                suggestion: "Please allow a moment for things to settle.",
+                teaMetaphor: "Good tea cannot be rushed."
+            }
+        ],
+        [ErrorSeverity.HIGH]: [
+            {
+                message: "Our service requires attention, like a kettle that's whistling for too long.",
+                suggestion: "We're working to restore balance quickly.",
+                teaMetaphor: "Even the most turbulent water can be calmed."
+            }
+        ],
+        [ErrorSeverity.CRITICAL]: [
+            {
+                message: "Our service needs immediate care, like a teapot about to boil over.",
+                suggestion: "Please wait while we address this urgent matter.",
+                teaMetaphor: "Sometimes we must remove the kettle from the heat entirely."
+            }
+        ]
     },
     ai: {
-        // ... similar structure for AI errors
+        [ErrorSeverity.LOW]: [
+            {
+                message: "Our AI needs a moment to recalibrate, like a tea master adjusting their technique.",
+                suggestion: "Let's try again with a fresh perspective.",
+                teaMetaphor: "Even the most skilled tea master occasionally needs to refine their approach."
+            }
+        ],
+        [ErrorSeverity.MEDIUM]: [
+            {
+                message: "The AI's thoughts are a bit clouded, like tea leaves that need to settle.",
+                suggestion: "Please allow a moment for clarity to return.",
+                teaMetaphor: "Just as tea leaves find their natural place, so will our solution."
+            }
+        ],
+        [ErrorSeverity.HIGH]: [
+            {
+                message: "Our AI requires focused attention, like a complex tea blend that's out of balance.",
+                suggestion: "We're working to restore harmony to the system.",
+                teaMetaphor: "Sometimes we must carefully adjust each element to achieve the perfect blend."
+            }
+        ],
+        [ErrorSeverity.CRITICAL]: [
+            {
+                message: "Our AI system needs immediate attention, like a precious tea set in jeopardy.",
+                suggestion: "Please wait while we address this critical matter.",
+                teaMetaphor: "In moments of crisis, we must act with both urgency and wisdom."
+            }
+        ]
     }
 };
 

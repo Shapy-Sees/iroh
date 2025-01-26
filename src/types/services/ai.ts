@@ -1,3 +1,5 @@
+// src/types/services/ai.ts
+
 export interface AIConfig {
     anthropicKey: string;
     elevenLabsKey?: string;
@@ -15,4 +17,4 @@ export interface AIService {
     processTextStreaming(text: string): Promise<void>;
     updateContext(key: string, value: any): Promise<void>;
     shutdown(): Promise<void>;
-} 
+}

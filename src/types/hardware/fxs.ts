@@ -1,4 +1,4 @@
-// src/types/fxs.ts
+// src/types/hardware/fxs.ts
 //
 // Type definitions for FXS (Foreign Exchange Station) hardware configuration
 // Provides type safety for FXS-specific settings while maintaining

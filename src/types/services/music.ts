@@ -1,3 +1,5 @@
+// src/types/services/music.ts
+
 export interface MusicConfig {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
@@ -26,4 +28,4 @@ export interface MusicStatus {
     queue: number;
     repeat?: 'off' | 'track' | 'queue';
     shuffle?: boolean;
-} 
+}

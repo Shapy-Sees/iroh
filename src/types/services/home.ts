@@ -1,3 +1,5 @@
+// src/types/services/home.ts
+
 // Home Assistant service types
 
 export interface HomeConfig {
@@ -44,4 +46,4 @@ export interface HAServiceCall {
         area_id?: string | string[];
     };
     service_data?: Record<string, any>;
-} 
+}

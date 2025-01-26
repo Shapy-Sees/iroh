@@ -6,24 +6,42 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
+import fs from 'fs';
+import { LogMetadata } from '../types/logging';
 
-// Define log level type for type safety
+// Define strict types according to spec
 type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 
-// Define error metadata interface
-interface ErrorMetadata {
-    error: Error;
-    context?: Record<string, any>;
+interface LogMetadata {
+    component?: string;
+    error?: {
+        message: string;
+        name: string;
+        stack?: string;
+        code?: string;
+    };
+    context?: Record<string, unknown>;
+    timestamp?: string;
+    details?: Record<string, unknown>;
 }
 
 export class Logger {
     private logger: winston.Logger;
+    private readonly logDir: string;
 
     constructor() {
-        // Ensure logs directory exists
-        const logDir = path.join(process.cwd(), 'logs');
+        this.logDir = path.join(process.cwd(), 'logs');
+        this.ensureLogDirectory();
+        this.initializeLogger();
+    }
 
-        // Create Winston logger instance with proper configuration
+    private ensureLogDirectory(): void {
+        if (!fs.existsSync(this.logDir)) {
+            fs.mkdirSync(this.logDir, { recursive: true });
+        }
+    }
+
+    private initializeLogger(): void {
         this.logger = winston.createLogger({
             level: process.env.LOG_LEVEL || 'info',
             format: winston.format.combine(
@@ -31,63 +49,63 @@ export class Logger {
                 winston.format.errors({ stack: true }),
                 winston.format.json()
             ),
-            transports: [
-                // Console transport for development
-                new winston.transports.Console({
-                    format: winston.format.combine(
-                        winston.format.colorize(),
-                        winston.format.simple()
-                    )
-                }),
-                // File transport with rotation
-                new DailyRotateFile({
-                    dirname: logDir,
-                    filename: 'iroh-%DATE%.log',
-                    datePattern: 'YYYY-MM-DD',
-                    maxSize: '20m',
-                    maxFiles: '14d',
-                    format: winston.format.combine(
-                        winston.format.timestamp(),
-                        winston.format.json()
-                    )
-                })
-            ]
+            transports: this.createTransports()
         });
     }
 
-    // Type-safe error logging
-    public error(message: string, error?: Error | unknown): void {
-        if (error instanceof Error) {
-            this.logger.error(message, {
-                error: {
-                    message: error.message,
-                    name: error.name,
-                    stack: error.stack
-                }
-            });
-        } else if (error !== undefined) {
-            this.logger.error(message, {
-                error: String(error)
-            });
-        } else {
-            this.logger.error(message);
-        }
+    private createTransports(): winston.transport[] {
+        return [
+            new winston.transports.Console({
+                format: winston.format.combine(
+                    winston.format.colorize(),
+                    winston.format.simple()
+                )
+            }),
+            new DailyRotateFile({
+                dirname: this.logDir,
+                filename: 'iroh-%DATE%.log',
+                datePattern: 'YYYY-MM-DD',
+                maxSize: '20m',
+                maxFiles: '14d',
+                format: winston.format.combine(
+                    winston.format.timestamp(),
+                    winston.format.json()
+                )
+            })
+        ];
     }
 
-    // Regular logging methods with proper typing
-    public warn(message: string, metadata?: Record<string, any>): void {
-        this.logger.warn(message, metadata);
+    public error(message: string, metadata?: LogMetadata): void {
+        const enrichedMetadata = this.enrichMetadata(metadata);
+        this.logger.error(message, enrichedMetadata);
     }
 
-    public info(message: string, metadata?: Record<string, any>): void {
-        this.logger.info(message, metadata);
+    public warn(message: string, metadata?: Partial<LogMetadata>): void {
+        const enrichedMetadata = this.enrichMetadata(metadata);
+        this.logger.warn(message, enrichedMetadata);
     }
 
-    public debug(message: string, metadata?: Record<string, any>): void {
-        this.logger.debug(message, metadata);
+    public info(message: string, metadata?: Partial<LogMetadata>): void {
+        const enrichedMetadata = this.enrichMetadata(metadata);
+        this.logger.info(message, enrichedMetadata);
     }
 
-    // Set log level dynamically
+    public debug(message: string, metadata?: Partial<LogMetadata>): void {
+        const enrichedMetadata = this.enrichMetadata(metadata);
+        this.logger.debug(message, enrichedMetadata);
+    }
+
+    private enrichMetadata(metadata?: LogMetadata): LogMetadata {
+        return {
+            timestamp: new Date().toISOString(),
+            ...metadata,
+            context: {
+                nodeEnv: process.env.NODE_ENV,
+                ...metadata?.context
+            }
+        };
+    }
+
     public setLevel(level: LogLevel): void {
         this.logger.level = level;
     }
@@ -96,11 +114,11 @@ export class Logger {
      * Print to console with proper formatting
      * Use this instead of console.log for debug output
      */
-    public print(message: string): void {
+    public print(message: string, metadata?: Partial<LogMetadata>): void {
         if (process.env.NODE_ENV === 'development') {
             console.log(message);
         } else {
-            this.info(message);
+            this.info(message, metadata);
         }
     }
 
