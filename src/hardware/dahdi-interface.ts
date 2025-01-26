@@ -23,16 +23,7 @@ import {
     DAHDIChannelStatus
 } from '../types/dahdi';
 
-// Define event types for better type safety
-interface DAHDIEvents {
-    'ready': void;
-    'error': Error;
-    'audio': AudioInput;
-    'hook_state': { offHook: boolean };
-    'ring_start': void;
-    'ring_stop': void;
-    'dtmf': { digit: string; duration: number };
-}
+
 
 export class DAHDIInterface extends EventEmitter {
     private fileHandle: FileHandle | null = null;
@@ -247,7 +238,21 @@ export class DAHDIInterface extends EventEmitter {
             setTimeout(() => this.readAudioLoop(), 1000);
         }
     }
-
+    public async generateTone(options: {
+        frequency: number;
+        duration: number;
+        level?: number;
+      }): Promise<void> {
+        // Implementation for tone generation
+        logger.debug('Generating tone', options);
+        // ... implementation
+      }
+    
+      public async stopTone(): Promise<void> {
+        logger.debug('Stopping tone');
+        // ... implementation
+      }
+    }
     /**
      * Handles audio playback with format conversion
      */

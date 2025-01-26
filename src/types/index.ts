@@ -32,6 +32,26 @@ export interface LogConfig {
     console?: boolean;
 }
 
+// Controller Types
+export interface PhoneControllerConfig {
+    fxs: {
+        devicePath: string;
+        sampleRate: 8000;
+        impedance?: number;
+    };
+    audio: {
+        bufferSize: number;
+        channels: 1;
+        bitDepth: 16;
+        vadThreshold?: number;
+    };
+    ai?: {
+        model?: string;
+        apiKey?: string;
+        temperature?: number;
+    };
+}
+
 // Audio Processing Types
 export interface AudioInput {
     sampleRate: number;
@@ -75,6 +95,17 @@ export interface DAHDIConfig {
     monitorInterval?: number;
 }
 
+// Define event types for better type safety
+interface DAHDIEvents {
+    'ready': void;
+    'error': Error;
+    'audio': AudioInput;
+    'hook_state': { offHook: boolean };
+    'ring_start': void;
+    'ring_stop': void;
+    'dtmf': { digit: string; duration: number };
+}
+
 export interface DAHDIChannelConfig {
     channel: number;
     signaling: 'fxs_ls' | 'fxs_gs' | 'fxs_ks';
@@ -87,6 +118,13 @@ export interface DAHDIChannelConfig {
         format: 'bell' | 'v23' | 'dtmf';
     };
     impedance: 600 | 900;
+}
+
+export interface DAHDIAudioFormat {
+    sampleRate: 8000;
+    channels: 1;
+    bitDepth: 16;
+    format: 'linear';
 }
 
 export interface DAHDIChannelStatus {
@@ -104,6 +142,68 @@ export interface DAHDIChannelStatus {
     };
 }
 
+// Home Assistant Types
+export interface HomeConfig {
+    url: string;
+    token: string;
+    entityPrefix?: string;
+    updateInterval?: number;
+}
+
+export interface HAEntity {
+    entity_id: string;
+    state: string;
+    attributes: Record<string, any>;
+    last_changed: string;
+    last_updated: string;
+    context?: {
+        id: string;
+        parent_id?: string;
+        user_id?: string;
+    };
+}
+
+export interface HAServiceCall {
+    domain: string;
+    service: string;
+    target?: {
+        entity_id?: string | string[];
+        device_id?: string | string[];
+        area_id?: string | string[];
+    };
+    service_data?: Record<string, any>;
+}
+
+export interface HAServiceConfig {
+    url: string;
+    token: string;
+    entityPrefix?: string;
+    updateInterval?: number;
+    cacheTimeout?: number;
+}
+
+export interface HomeConfig {
+    /** HomeKit bridge configuration */
+    homekitBridge: {
+        /** Bridge PIN code */
+        pin: string;
+        /** Bridge name */
+        name: string;
+        /** Bridge port number */
+        port: number;
+        /** Optional setup code */
+        setupCode?: string;
+    };
+    /** Entity prefix for Home Assistant */
+    entityPrefix?: string;
+    /** Update interval in milliseconds */
+    updateInterval?: number;
+    /** URL for Home Assistant instance */
+    url?: string;
+    /** Access token for Home Assistant */
+    token?: string;
+}
+
 // Service Types
 export interface AIConfig {
     anthropicKey: string;
@@ -118,17 +218,6 @@ export interface MusicConfig {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
     appleMusicKey?: string;
-}
-
-export interface HomeConfig {
-    homekitBridge: {
-        pin: string;
-        name: string;
-        port: number;
-        setupCode?: string;
-    };
-    entityPrefix?: string;
-    updateInterval?: number;
 }
 
 export interface AudioConfig {
@@ -204,6 +293,33 @@ export class ConfigurationError extends IrohError {
     }
 }
 
+export class DAHDIError extends HardwareError {
+    constructor(message: string, public originalError?: Error) {
+        super(message);
+        this.name = 'DAHDIError';
+    }
+}
+
+export class AudioFormatError extends HardwareError {
+    constructor(message: string, public details: string[]) {
+        super(message);
+        this.name = 'AudioFormatError';
+    }
+}
+
+// Service Status Types
+export interface ServiceStatus {
+    isInitialized: boolean;
+    isHealthy: boolean;
+    lastError?: Error;
+    metrics: {
+        uptime: number;
+        errors: number;
+        warnings: number;
+        lastChecked?: Date;
+    };
+}
+
 // Event System Types
 export interface EventBusConfig {
     maxHistory?: number;
@@ -222,19 +338,6 @@ export interface EventHistoryItem<T = any> {
     metadata?: Record<string, any>;
 }
 
-// Service Status Types
-export interface ServiceStatus {
-    isInitialized: boolean;
-    isHealthy: boolean;
-    lastError?: Error;
-    metrics: {
-        uptime: number;
-        errors: number;
-        warnings: number;
-        lastChecked?: Date;
-    };
-}
-
 // Handler Types
 export type EventHandler<T = any> = (data: T) => Promise<void> | void;
 
@@ -246,3 +349,24 @@ export type Result<T> = {
     success: false;
     error: Error;
 };
+
+// Cache Types
+export interface CacheOptions {
+    ttl?: number;
+    maxSize?: number;
+    namespace?: string;
+}
+
+export interface CacheItem<T> {
+    value: T;
+    expires: number;
+}
+
+export interface CacheEvents {
+    'set': { key: string; value: any };
+    'hit': { key: string };
+    'delete': { key: string };
+    'clear': void;
+    'evict': { key: string };
+    'expire': { key: string };
+}

@@ -16,7 +16,7 @@ interface ErrorMetadata {
     context?: Record<string, any>;
 }
 
-class Logger {
+export class Logger {
     private logger: winston.Logger;
 
     constructor() {

@@ -1,63 +1,75 @@
 // src/utils/error-handler.ts
 //
-// Key Features:
-// - Centralized error handling
-// - Error classification and prioritization
-// - Recovery strategies
-// - User feedback generation
-// - Error logging and monitoring
-// - State recovery
-// - Circuit breaker implementation
+// Centralized error handling system with proper error wrapping,
+// logging, and recovery strategies.
 
 import { EventEmitter } from 'events';
-import { IrohError, HardwareError, ServiceError } from '../types';
 import { logger } from './logger';
+import { IrohError, HardwareError, ServiceError, ensureError } from '../types/errors';
 
-enum ErrorSeverity {
-    LOW = 'low',       // Non-critical, can continue
-    MEDIUM = 'medium', // Needs attention but not immediate
-    HIGH = 'high',     // Requires immediate attention
-    CRITICAL = 'critical' // System shutdown may be required
+// Error severity levels
+export enum ErrorSeverity {
+    LOW = 'low',
+    MEDIUM = 'medium',
+    HIGH = 'high',
+    CRITICAL = 'critical'
 }
 
-interface ErrorContext {
+// Context for error handling
+export interface ErrorContext {
     component: string;
     operation: string;
-    timestamp: Date;
+    severity?: ErrorSeverity;
+    timestamp?: Date;
     metadata?: Record<string, any>;
 }
 
-interface RecoveryStrategy {
-    maxRetries: number;
-    backoffMs: number;
-    timeout: number;
-    action: () => Promise<void>;
-}
-
 export class ErrorHandler extends EventEmitter {
+    private static instance: ErrorHandler;
     private retryCount: Map<string, number> = new Map();
-    private circuitBreaker: Map<string, boolean> = new Map();
-    private readonly maxRetries: number = 3;
+    private readonly maxRetries = 3;
 
-    constructor() {
+    private constructor() {
         super();
         this.setupGlobalHandlers();
     }
 
-    private setupGlobalHandlers(): void {
-        process.on('uncaughtException', this.handleUncaughtException.bind(this));
-        process.on('unhandledRejection', this.handleUnhandledRejection.bind(this));
+    public static getInstance(): ErrorHandler {
+        if (!ErrorHandler.instance) {
+            ErrorHandler.instance = new ErrorHandler();
+        }
+        return ErrorHandler.instance;
     }
 
-    public async handleError(error: Error, context: ErrorContext): Promise<void> {
-        try {
-            const severity = this.classifyError(error);
-            logger.error('Error detected', { error, context, severity });
+    private setupGlobalHandlers(): void {
+        process.on('uncaughtException', (error: Error) => {
+            this.handleError(error, {
+                component: 'system',
+                operation: 'uncaught',
+                severity: ErrorSeverity.CRITICAL
+            });
+        });
 
-            // Check circuit breaker
-            if (this.isCircuitBroken(context.component)) {
-                throw new Error(`Circuit breaker open for ${context.component}`);
-            }
+        process.on('unhandledRejection', (reason: unknown) => {
+            this.handleError(ensureError(reason), {
+                component: 'system',
+                operation: 'unhandledRejection',
+                severity: ErrorSeverity.HIGH
+            });
+        });
+    }
+
+    public async handleError(error: unknown, context: ErrorContext): Promise<void> {
+        const wrappedError = ensureError(error);
+        const severity = context.severity || this.classifyError(wrappedError);
+
+        try {
+            // Log the error with context
+            logger.error('Error detected', {
+                error: wrappedError,
+                context,
+                severity
+            });
 
             // Increment retry count
             const retryKey = `${context.component}:${context.operation}`;
@@ -66,31 +78,25 @@ export class ErrorHandler extends EventEmitter {
 
             // Handle based on severity
             switch (severity) {
-                case ErrorSeverity.LOW:
-                    await this.handleLowSeverityError(error, context);
-                    break;
-                case ErrorSeverity.MEDIUM:
-                    await this.handleMediumSeverityError(error, context);
+                case ErrorSeverity.CRITICAL:
+                    await this.handleCriticalError(wrappedError, context);
                     break;
                 case ErrorSeverity.HIGH:
-                    await this.handleHighSeverityError(error, context);
+                    await this.handleHighSeverityError(wrappedError, context);
                     break;
-                case ErrorSeverity.CRITICAL:
-                    await this.handleCriticalError(error, context);
-                    break;
+                default:
+                    await this.handleNormalError(wrappedError, context);
             }
 
-            // Reset retry count if successful
-            if (currentRetries + 1 >= this.maxRetries) {
-                this.circuitBreaker.set(context.component, true);
-                setTimeout(() => {
-                    this.circuitBreaker.set(context.component, false);
-                }, 60000); // Reset after 1 minute
-            }
+            // Emit error event
+            this.emit('error', { error: wrappedError, context });
 
         } catch (handlingError) {
             logger.error('Error during error handling:', handlingError);
-            this.emit('errorHandlingFailed', { originalError: error, handlingError });
+            this.emit('errorHandlingFailed', {
+                originalError: wrappedError,
+                handlingError: ensureError(handlingError)
+            });
         }
     }
 
@@ -107,172 +113,80 @@ export class ErrorHandler extends EventEmitter {
         return ErrorSeverity.MEDIUM;
     }
 
-    private isCircuitBroken(component: string): boolean {
-        return this.circuitBreaker.get(component) || false;
-    }
-
-    private async handleLowSeverityError(error: Error, context: ErrorContext): Promise<void> {
-        logger.debug('Handling low severity error', { error, context });
-        
-        // Emit event for user feedback
-        this.emit('userFeedback', {
-            message: "I encountered a small hiccup. Let me try that again.",
-            tone: 'apologetic'
-        });
-
-        // Attempt recovery
-        await this.attemptRecovery({
-            maxRetries: 2,
-            backoffMs: 1000,
-            timeout: 5000,
-            action: async () => {
-                // Retry the operation
-                await this.retryOperation(context);
-            }
-        });
-    }
-
-    private async handleMediumSeverityError(error: Error, context: ErrorContext): Promise<void> {
-        logger.warn('Handling medium severity error', { error, context });
-
-        this.emit('userFeedback', {
-            message: "I'm having some trouble with that request. Give me a moment to sort it out.",
-            tone: 'concerned'
-        });
-
-        // Save state before recovery attempt
-        const state = await this.saveState(context);
-
-        try {
-            await this.attemptRecovery({
-                maxRetries: 3,
-                backoffMs: 2000,
-                timeout: 10000,
-                action: async () => {
-                    await this.restoreState(state);
-                    await this.retryOperation(context);
-                }
-            });
-        } catch (recoveryError) {
-            this.emit('recoveryFailed', { error, recoveryError });
-        }
-    }
-
-    private async handleHighSeverityError(error: Error, context: ErrorContext): Promise<void> {
-        logger.error('Handling high severity error', { error, context });
-
-        this.emit('userFeedback', {
-            message: "I'm experiencing technical difficulties. I may need to restart some systems.",
-            tone: 'serious'
-        });
-
-        try {
-            // Attempt component restart
-            await this.restartComponent(context.component);
-            
-            // Verify component health
-            if (await this.verifyComponentHealth(context.component)) {
-                await this.retryOperation(context);
-            } else {
-                throw new Error(`Component ${context.component} failed health check`);
-            }
-        } catch (restartError) {
-            await this.handleCriticalError(restartError, context);
-        }
-    }
-
     private async handleCriticalError(error: Error, context: ErrorContext): Promise<void> {
-        logger.error('Handling critical error', { error, context });
-
-        this.emit('userFeedback', {
-            message: "I need to perform some maintenance. I'll be back in a moment.",
-            tone: 'urgent'
+        logger.error('Critical error detected:', {
+            error,
+            context
         });
 
         // Notify monitoring systems
         this.emit('criticalError', { error, context });
 
-        // Attempt graceful shutdown
-        try {
+        // Initiate graceful shutdown if needed
+        if (this.shouldInitiateShutdown(error)) {
             await this.initiateGracefulShutdown();
-        } catch (shutdownError) {
-            logger.error('Failed to shutdown gracefully:', shutdownError);
-            process.exit(1);
         }
     }
 
-    private async attemptRecovery(strategy: RecoveryStrategy): Promise<void> {
-        let attempt = 0;
-        
-        while (attempt < strategy.maxRetries) {
-            try {
-                await Promise.race([
-                    strategy.action(),
-                    new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Recovery timeout')), 
-                        strategy.timeout)
-                    )
-                ]);
-                return;
-            } catch (error) {
-                attempt++;
-                if (attempt < strategy.maxRetries) {
-                    await new Promise(resolve => 
-                        setTimeout(resolve, strategy.backoffMs * attempt)
-                    );
-                }
-            }
+    private async handleHighSeverityError(error: Error, context: ErrorContext): Promise<void> {
+        logger.error('High severity error:', {
+            error,
+            context
+        });
+
+        const retryKey = `${context.component}:${context.operation}`;
+        const retryCount = this.retryCount.get(retryKey) || 0;
+
+        if (retryCount < this.maxRetries) {
+            await this.attemptRecovery(context);
+        } else {
+            await this.handleCriticalError(error, {
+                ...context,
+                severity: ErrorSeverity.CRITICAL
+            });
         }
-        
-        throw new Error('Recovery attempts exhausted');
     }
 
-    private async saveState(context: ErrorContext): Promise<any> {
-        // Implementation depends on your state management system
-        return {};
+    private async handleNormalError(error: Error, context: ErrorContext): Promise<void> {
+        logger.warn('Error occurred:', {
+            error,
+            context
+        });
+
+        // Attempt basic recovery
+        await this.attemptRecovery(context);
     }
 
-    private async restoreState(state: any): Promise<void> {
-        // Implementation depends on your state management system
+    private async attemptRecovery(context: ErrorContext): Promise<void> {
+        try {
+            // Implement recovery logic based on context
+            logger.info('Attempting recovery', { context });
+            
+            // Reset retry count on successful recovery
+            const retryKey = `${context.component}:${context.operation}`;
+            this.retryCount.delete(retryKey);
+            
+        } catch (recoveryError) {
+            logger.error('Recovery failed:', recoveryError);
+            throw recoveryError;
+        }
     }
 
-    private async retryOperation(context: ErrorContext): Promise<void> {
-        // Implementation depends on your operation retry logic
-    }
-
-    private async restartComponent(component: string): Promise<void> {
-        // Implementation depends on your component management system
-    }
-
-    private async verifyComponentHealth(component: string): Promise<boolean> {
-        // Implementation depends on your health check system
-        return true;
+    private shouldInitiateShutdown(error: Error): boolean {
+        return error instanceof HardwareError || 
+               error.message.includes('CRITICAL');
     }
 
     private async initiateGracefulShutdown(): Promise<void> {
-        // Implementation depends on your shutdown requirements
+        logger.warn('Initiating graceful shutdown...');
+        // Implement shutdown logic
+        process.exit(1);
     }
 
-    private handleUncaughtException(error: Error): void {
-        logger.error('Uncaught exception:', error);
-        this.handleError(error, {
-            component: 'system',
-            operation: 'uncaught',
-            timestamp: new Date()
-        });
-    }
-
-    private handleUnhandledRejection(reason: any): void {
-        logger.error('Unhandled rejection:', reason);
-        this.handleError(
-            reason instanceof Error ? reason : new Error(String(reason)),
-            {
-                component: 'system',
-                operation: 'unhandledRejection',
-                timestamp: new Date()
-            }
-        );
+    public resetRetryCount(component: string, operation: string): void {
+        this.retryCount.delete(`${component}:${operation}`);
     }
 }
 
-export const errorHandler = new ErrorHandler();
+// Export singleton instance
+export const errorHandler = ErrorHandler.getInstance();

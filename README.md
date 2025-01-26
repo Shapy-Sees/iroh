@@ -109,6 +109,116 @@ The system is built around three main components:
   - Jest for testing
   - Winston for logging
 
+## Project Structure
+
+The project follows a carefully organized directory structure that separates concerns while maintaining clear relationships between components. Here is the complete directory layout with explanations for each section:
+
+```
+iroh/
+├── src/                      # Source code root
+│   ├── app.ts               # Main application entry point
+│   │
+│   ├── audio/               # Audio processing components
+│   │   ├── pipeline.ts      # Audio processing pipeline
+│   │   ├── dtmf-detector.ts # DTMF tone detection
+│   │   └── voice-detector.ts # Voice activity detection
+│   │
+│   ├── config/              # Configuration management
+│   │   ├── index.ts         # Configuration loading and validation
+│   │   ├── dahdi.ts         # DAHDI-specific configuration
+│   │   └── fxs.config.ts    # FXS hardware configuration
+│   │
+│   ├── controllers/         # System controllers
+│   │   ├── phone-controller.ts     # Main phone interface controller
+│   │   └── phone-feedback-handler.ts # User feedback management
+│   │
+│   ├── core/                # Core system components
+│   │   ├── index.ts         # Core initialization
+│   │   ├── constants.ts     # System-wide constants
+│   │   ├── event-bus.ts     # Event management system
+│   │   └── state-manager.ts # Global state management
+│   │
+│   ├── debug/               # Debugging utilities
+│   │   └── debug-console.ts # Interactive debug console
+│   │
+│   ├── hardware/            # Hardware interfaces
+│   │   ├── dahdi-interface.ts      # DAHDI driver interface
+│   │   └── dahdi-audio-converter.ts # Audio format conversion
+│   │
+│   ├── services/            # Service implementations
+│   │   ├── ai/             # AI service components
+│   │   │   ├── ai-service.ts          # Claude integration
+│   │   │   └── conversation-manager.ts # Context management
+│   │   │
+│   │   ├── home/           # Home automation components
+│   │   │   ├── ha_service.ts # Home Assistant service
+│   │   │   ├── ha_client.ts  # Home Assistant API client
+│   │   │   └── types.ts      # Home Assistant types
+│   │   │
+│   │   ├── music/          # Music service components
+│   │   │   └── music-service.ts # Music playback service
+│   │   │
+│   │   ├── timer/          # Timer service components
+│   │   │   └── timer-service.ts # Timer management
+│   │   │
+│   │   ├── hardware/       # Hardware service components
+│   │   │   └── hardware-service.ts # Hardware management
+│   │   │
+│   │   ├── intent/         # Intent processing
+│   │   │   └── intent-handler.ts # Command intent detection
+│   │   │
+│   │   └── service-manager.ts # Service coordination
+│   │
+│   └── types/              # TypeScript type definitions
+        ├── index.ts        # Core shared types (Config, Status, Events)
+        ├── dahdi.ts        # DAHDI hardware types  
+        ├── fxs.ts          # FXS hardware types
+        └── service/
+            ├── ai.ts       # AI service types
+            ├── home.ts     # Home Assistant types
+            ├── music.ts    # Music service types
+            └── index.ts    # Re-exports service types
+│   └── utils/              # Utility functions
+│       ├── logger.ts       # Logging system
+│       ├── cache.ts        # Caching implementation
+│       ├── circular-buffer.ts # Audio buffer management
+│       ├── error-handler.ts   # Error handling system
+│       ├── error-messages.ts  # User-facing error messages
+│       ├── stream-utils.ts    # Stream processing utilities
+│       └── success-feedback.ts # Success message handling
+│
+├── config/                  # Configuration files
+│   ├── default.json        # Default configuration
+│   ├── development.json    # Development environment config
+│   └── production.json     # Production environment config
+│
+├── scripts/                 # Utility scripts
+│   ├── debug.sh            # Debug script
+│   ├── dev.sh             # Development environment script
+│   └── shell.sh           # Container shell access
+│
+├── docs/                    # Documentation
+│   ├── api-docs.md         # API documentation
+│   ├── commands-doc.md     # Command reference
+│   ├── dahdi-implementation.md # DAHDI integration guide
+│   ├── hardware-setup.md   # Hardware setup guide
+│   └── software-setup.md   # Software setup guide
+│
+├── tests/                  # Test suites
+│   ├── unit/              # Unit tests
+│   ├── integration/       # Integration tests
+│   └── setup.ts           # Test configuration
+│
+├── docker-compose.yml      # Docker composition
+├── Dockerfile             # Main Docker configuration
+├── Dockerfile.dev         # Development Docker configuration
+├── jest.config.js         # Jest test configuration
+├── package.json           # NPM package configuration
+├── tsconfig.json          # TypeScript configuration
+└── README.md              # Project documentation
+```
+
+
 ## Getting Started
 
 ### Prerequisites

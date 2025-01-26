@@ -4,7 +4,9 @@
 
 Iroh is an AI-powered interface for vintage telephones that provides smart home control, voice interaction, and media playback capabilities. The system integrates with DAHDI hardware to bridge analog telephony with modern digital services.
 
-## System Architecture
+## System Architecture & Component Organization
+
+The system is organized into logical layers that separate concerns while maintaining clear interfaces between components. Each layer has specific implementation requirements and relationships.
 
 ### Core Components
 
@@ -25,6 +27,62 @@ Iroh is an AI-powered interface for vintage telephones that provides smart home 
    - Event Bus
    - State Manager
 
+### Core Layer
+- **Purpose**: Provides fundamental system services and coordination
+- **Key Components**: EventBus, StateManager, Configuration
+- **Requirements**:
+  - Must initialize before other layers
+  - Handles cross-cutting concerns
+  - Provides type-safe interfaces
+  - Manages system-wide state
+
+### Hardware Layer
+- **Purpose**: Manages DAHDI/FXS hardware interaction
+- **Key Components**: DAHDIInterface, AudioPipeline, HardwareService
+- **Requirements**:
+  - Must maintain DAHDI compatibility (8kHz/16-bit/mono)
+  - Implements hardware abstraction
+  - Provides error recovery
+  - Handles real-time audio processing
+
+### Service Layer
+- **Purpose**: Implements business logic and external integrations
+- **Key Components**: AIService, HomeService, MusicService, TimerService
+- **Requirements**:
+  - Services must be independently testable
+  - Implements retry and recovery logic
+  - Maintains service-specific state
+  - Provides clean shutdown
+
+### Controller Layer
+- **Purpose**: Coordinates between hardware and services
+- **Key Components**: PhoneController, ServiceManager
+- **Requirements**:
+  - Manages component lifecycle
+  - Handles cross-service operations
+  - Implements command processing
+  - Provides user feedback
+
+### Support Systems
+- **Purpose**: Provides cross-cutting functionality
+- **Key Components**: Logging, Caching, Error Handling
+- **Requirements**:
+  - Must be available to all layers
+  - Implements consistent interfaces
+  - Provides configuration options
+  - Maintains performance characteristics
+
+### Implementation Rules
+1. Components must communicate through defined interfaces
+2. Layer dependencies flow downward only
+3. Each component owns its type definitions
+4. All operations must be logged appropriately
+5. Error handling must be comprehensive
+6. State changes must be trackable
+
+
+
+
 ### Component Relationships
 
 ```mermaid
@@ -42,240 +100,226 @@ graph TD
     StateManager[State Manager] --- ServiceManager
 ```
 
+
+
 ## Type System
 
-### Core Types (src/types/index.ts)
+# Type System Organization
+
+- Core types used across multiple components go in index.ts
+- Hardware types stay in their own files
+- Each major service gets its own type file in service/
+- Service types are re-exported through service/index.ts
+
+## Directory Structure
+
+```
+src/types/
+  ├── index.ts        # Core shared types (Config, Status, Events)
+  ├── dahdi.ts        # DAHDI hardware types  
+  ├── fxs.ts          # FXS hardware types
+  └── service/
+      ├── ai.ts       # AI service types
+      ├── home.ts     # Home Assistant types
+      ├── music.ts    # Music service types
+      └── index.ts    # Re-exports service types
+```
+
+## Core Types (index.ts)
+
+Core types used across multiple components:
 
 ```typescript
-// Base configuration types
+// Base configuration interface
 export interface Config {
     app: AppConfig;
     audio: AudioConfig;
-    ai: AIConfig;
-    music: MusicConfig;
-    home: HomeConfig;
     logging: LogConfig;
+    services: ServiceConfig;
 }
 
-export interface AppConfig {
-    name: string;
-    env: 'development' | 'production' | 'test';
-    port: number;
-    dataDir?: string;
+// Event system types
+export interface EventBusConfig {
+    maxHistory?: number;
+    debug?: boolean;
 }
 
-// Hardware configuration
-export interface AudioConfig {
-    sampleRate: 8000;  // DAHDI requires 8kHz
-    channels: 1;       // DAHDI requires mono
-    bitDepth: 16;      // DAHDI requires 16-bit
-    vadThreshold: number;
-    silenceThreshold: number;
-    bufferSize?: number;
-}
-
-// Service configurations
-export interface AIConfig {
-    anthropicKey: string;
-    elevenLabsKey?: string;
-    openAIKey?: string;
-    maxTokens?: number;
-    temperature?: number;
-    voiceId?: string;
-}
-
-export interface MusicConfig {
-    spotifyClientId?: string;
-    spotifyClientSecret?: string;
-    appleMusicKey?: string;
-}
-
-export interface HomeConfig {
-    url: string;
-    token: string;
-    entityPrefix?: string;
-    updateInterval?: number;
-}
-
-export interface LogConfig {
-    level: 'debug' | 'info' | 'warn' | 'error';
-    directory: string;
-    maxFiles: string;
-    maxSize: string;
-    console?: boolean;
-}
-
-// Controller configuration
-export interface PhoneControllerConfig {
-    fxs: {
-        devicePath: string;
-        sampleRate: 8000;
-        impedance?: number;
-    };
-    audio: {
-        bufferSize: number;
-        channels: 1;
-        bitDepth: 16;
-        vadThreshold?: number;
-    };
-    ai?: {
-        model?: string;
-        apiKey?: string;
-        temperature?: number;
-    };
-}
-
-// Service status tracking
+// Status tracking
 export interface ServiceStatus {
     isInitialized: boolean;
     isHealthy: boolean;
     lastError?: Error;
-    metrics: {
-        uptime: number;
-        errors: number;
-        warnings: number;
-        lastChecked?: Date;
-    };
+    metrics: ServiceMetrics;
 }
 
 // Error types
 export class IrohError extends Error {
-    constructor(message: string, public code: string) {
-        super(message);
-        this.name = 'IrohError';
-    }
-}
-
-export class HardwareError extends IrohError {
-    constructor(message: string) {
-        super(message, 'HARDWARE_ERROR');
-        this.name = 'HardwareError';
-    }
-}
-
-export class ServiceError extends IrohError {
-    constructor(message: string) {
-        super(message, 'SERVICE_ERROR');
-        this.name = 'ServiceError';
-    }
+    constructor(message: string, code: string);
 }
 ```
 
-### Hardware Types (src/types/hardware/dahdi.ts)
+## Hardware Types
 
+### DAHDI Types (dahdi.ts)
 ```typescript
 export interface DAHDIConfig {
     devicePath: string;
-    controlPath: string;
-    sampleRate: 8000;  // Required by DAHDI
-    channels: 1;       // Required by DAHDI
-    bitDepth: 16;      // Required by DAHDI
-    bufferSize: number;
-    channel: number;
-    monitorInterval?: number;
-}
-
-export interface DAHDIChannelConfig {
-    channel: number;
-    signaling: 'fxs_ls' | 'fxs_gs' | 'fxs_ks';
-    echocancel?: {
-        enabled: boolean;
-        taps: number;
-    };
-    callerid?: {
-        enabled: boolean;
-        format: 'bell' | 'v23' | 'dtmf';
-    };
-    impedance: 600 | 900;
-}
-
-export interface DAHDIAudioFormat {
     sampleRate: 8000;
     channels: 1;
     bitDepth: 16;
-    format: 'linear';
 }
 
 export interface DAHDIChannelStatus {
     isOpen: boolean;
-    channel: number;
     alarms: number;
-    signaling: {
-        type: string;
-        hookstate: 'onhook' | 'offhook';
-        ringing: boolean;
-    };
-    levels?: {
-        rxLevel: number;
-        txLevel: number;
-    };
+    signaling: DAHDISignaling;
 }
 ```
 
-### Audio Types (src/types/audio/index.ts)
-
+### FXS Types (fxs.ts)
 ```typescript
-export interface AudioInput {
-    sampleRate: number;
-    channels: number;
-    bitDepth: number;
-    data: Buffer;
+export interface FXSConfig {
+    channel: number;
+    impedance: 600 | 900;
+    echoCancel: boolean;
 }
 
-export interface AudioOutput {
-    sampleRate: number;
-    channels: number;
-    bitDepth: number;
-    data: Buffer;
-    metadata?: Record<string, any>;
-}
-
-export interface DTMFEvent {
-    digit: string;
-    duration: number;
-    timestamp: number;
-    strength?: number;
-}
-
-export interface VoiceEvent {
-    audio: Buffer;
-    startTime: number;
-    endTime: number;
-    isFinal: boolean;
-    confidence?: number;
+export interface FXSStatus {
+    voltage: number;
+    current: number;
+    state: 'idle' | 'ringing' | 'offhook';
 }
 ```
 
-### Service Types (src/types/services/index.ts)
+## Service Types
 
+### AI Service (service/ai.ts)
 ```typescript
-export interface AIService {
-    initialize(): Promise<void>;
-    processText(text: string): Promise<string>;
-    processVoice(audioBuffer: Buffer): Promise<string>;
-    generateSpeech(text: string): Promise<Buffer>;
-    updateContext(key: string, value: any): Promise<void>;
-    shutdown(): Promise<void>;
+export interface AIConfig {
+    anthropicKey: string;
+    elevenLabsKey?: string;
+    maxTokens?: number;
 }
 
-export interface MusicService {
-    executeCommand(command: string): Promise<void>;
-    play(query: string): Promise<void>;
-    pause(): Promise<void>;
-    next(): Promise<void>;
-    previous(): Promise<void>;
-    setVolume(level: number): Promise<void>;
-    getStatus(): Promise<MusicStatus>;
-}
-
-export interface HomeService {
-    initialize(): Promise<void>;
-    executeCommand(command: string): Promise<void>;
-    getEntityState(entityId: string): Promise<HAEntity>;
-    getStatus(): Promise<HAStatus>;
-    shutdown(): Promise<void>;
+export interface ConversationContext {
+    history: Message[];
+    state: Record<string, any>;
 }
 ```
+
+### Home Assistant (service/home.ts)
+```typescript
+export interface HAConfig {
+    url: string;
+    token: string;
+    entityPrefix?: string;
+}
+
+export interface HAEntity {
+    entityId: string;
+    state: any;
+    attributes: Record<string, any>;
+}
+```
+
+### Music Service (service/music.ts)
+```typescript
+export interface MusicConfig {
+    provider: 'spotify' | 'apple';
+    clientId: string;
+    clientSecret: string;
+}
+
+export interface PlaybackState {
+    isPlaying: boolean;
+    currentTrack?: Track;
+    volume: number;
+}
+```
+
+### Service Index (service/index.ts)
+```typescript
+export * from './ai';
+export * from './home';
+export * from './music';
+
+export interface ServiceConfig {
+    ai: AIConfig;
+    home: HAConfig;
+    music: MusicConfig;
+}
+```
+
+## Type System Rules
+
+
+1. **Core Types**
+   - Place in `index.ts` if used across multiple components
+   - Keep interfaces focused and minimal
+   - Use strict literal types where appropriate
+   - Maintain backwards compatibility
+
+2. **Hardware Types**
+   - Separate DAHDI and FXS concerns
+   - Use hardware-specific constants
+   - Include proper validation types
+   - Document hardware requirements
+
+3. **Service Types**
+   - One file per major service
+   - Export through service/index.ts
+   - Include configuration and state types
+   - Define clear service interfaces
+
+4. **Type Safety**
+   - Use strict null checks
+   - Prefer unions over enums
+   - Define proper error types
+   - Include validation helpers
+
+5. **Documentation**
+   - Document all public interfaces
+   - Include usage examples
+   - Note hardware requirements
+   - Explain type constraints
+
+## Implementation Guidelines
+
+1. **Type Imports**
+   ```typescript
+   // Prefer named imports
+   import { Config, ServiceStatus } from '../types';
+   import { DAHDIConfig } from '../types/dahdi';
+   import { AIService } from '../types/service';
+   ```
+
+2. **Type Extensions**
+   ```typescript
+   // Extend base interfaces
+   interface CustomService extends ServiceStatus {
+     additionalField: string;
+   }
+   ```
+
+3. **Type Validation**
+   ```typescript
+   // Include validation helpers
+   export function validateConfig(config: Config): string[] {
+     const errors: string[] = [];
+     // Validation logic
+     return errors;
+   }
+   ```
+
+4. **Type Guards**
+   ```typescript
+   // Use type guards for runtime checks
+   export function isDAHDIError(error: unknown): error is DAHDIError {
+     return error instanceof Error && 
+            'code' in error && 
+            error.code.startsWith('DAHDI_');
+   }
+   ```
 
 ## Service Implementation Requirements
 
@@ -433,6 +477,8 @@ Each component must include:
      └── tests/          # Test suites
    ```
 
+
+
 2. Build Process
    - TypeScript compilation
    - Linting and formatting
@@ -444,6 +490,101 @@ Each component must include:
    - Configuration validation
    - Health checks
    - Monitoring setup
+
+## Constants Management
+
+The system uses a centralized constants management approach to ensure consistency across all components. The core constants file serves as the single source of truth for system-wide values, configurations, and mappings.
+
+### Constants Organization
+
+Constants are organized into logical categories:
+
+1. System Constants
+   - Version information
+   - Application name
+   - Default port settings
+   - Base configuration values
+
+2. Event Types
+   - Phone/Hardware events (including DAHDI)
+   - System events
+   - Service events
+   - Status change events
+
+3. Error Codes
+   - Hardware errors (including DAHDI-specific)
+   - System errors
+   - Service errors
+   - Component-specific error codes
+
+4. Hardware Configuration
+   - DAHDI settings
+   - Audio format requirements
+   - Buffer configurations
+   - Hardware timing values
+
+5. Timeouts and Intervals
+   - Command timeouts
+   - Response windows
+   - Hardware polling intervals
+   - Service timeouts
+
+### Implementation Requirements
+
+The constants system must provide:
+
+1. Type Safety
+   - All constants must be properly typed
+   - Use literal types where appropriate
+   - Prevent accidental modification
+
+2. Documentation
+   - Each constant category must be documented
+   - Include purpose and usage notes
+   - Document any hardware requirements
+
+3. Validation
+   - Constants must be validated at startup
+   - Prevent invalid combinations
+   - Ensure DAHDI compatibility
+
+4. Accessibility
+   - Easy import system
+   - Logical grouping
+   - Clear naming conventions
+
+### DAHDI-Specific Constants
+
+Special attention is given to DAHDI hardware requirements:
+
+1. Audio Format
+   - Sample rate: 8000Hz (required)
+   - Channels: Mono only
+   - Bit depth: 16-bit
+   - Buffer sizing
+
+2. Hardware Settings
+   - FXS voltage requirements
+   - Ring voltage specifications
+   - Line impedance options
+   - Channel limitations
+
+3. Timing Constants
+   - Ring durations
+   - DTMF detection windows
+   - Echo cancellation parameters
+   - Buffer processing intervals
+
+### Usage Guidelines
+
+When using system constants:
+
+1. Always import from the central constants file
+2. Never duplicate constant definitions
+3. Use the provided type system
+4. Document any component-specific constants
+5. Maintain hardware compatibility
+
 
 ## Future Considerations
 

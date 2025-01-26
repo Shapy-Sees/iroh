@@ -66,6 +66,37 @@ export const EVENTS = {
     }
 };
 
+export const DAHDI_CONSTANTS = {
+    // Device paths
+    DEVICE_PATH: '/dev/dahdi/channel001',
+    CONTROL_PATH: '/dev/dahdi/ctl',
+    
+    // Audio format requirements (immutable for DAHDI)
+    SAMPLE_RATE: 8000,
+    CHANNELS: 1,
+    BIT_DEPTH: 16,
+    
+    // Hardware settings
+    LINE_IMPEDANCE: 600,
+    FXS_VOLTAGE: 48,
+    RING_VOLTAGE: 90,
+    
+    // Buffer configuration
+    BUFFER_SIZE: 320,  // 20ms at 8kHz/16-bit
+    MIN_BUFFER_SIZE: 32,
+    MAX_BUFFER_SIZE: 8192,
+    
+    // Default channel settings
+    DEFAULT_CHANNEL: 1,
+    MAX_CHANNELS: 32,
+    
+    // Timing constants
+    RING_TIMEOUT: 2000,
+    DTMF_TIMEOUT: 40,
+    ECHO_CANCEL_TAPS: 128
+} as const;
+
+
 // Error codes for system components
 export const ERROR_CODES = {
     // Hardware errors including DAHDI

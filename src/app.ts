@@ -8,9 +8,10 @@ import { PhoneController } from './controllers/phone-controller';
 import { ServiceManager } from './services/service-manager';
 import { TimerService } from './services/timer/timer-service';
 import { HardwareService } from './services/hardware/hardware-service';
-import { Config, PhoneControllerConfig, AIConfig } from './types';
+import { Config, FXSConfig } from './types';
 import { config } from './config';
 import { logger } from './utils/logger';
+import { DAHDI_CONSTANTS } from './core/constants';
 
 export class IrohApp {
     private phoneController!: PhoneController;
@@ -19,20 +20,24 @@ export class IrohApp {
     private hardwareService!: HardwareService;
 
     constructor() {
-        // Create phone controller config with proper types
-        const phoneConfig: PhoneControllerConfig = {
+        // Create phone controller config with proper FXS types
+        const phoneConfig: FXSConfig = {
             fxs: {
-                devicePath: process.env.DAHDI_DEVICE_PATH || '/dev/dahdi/channel001',
-                sampleRate: 8000
+                devicePath: process.env.DAHDI_DEVICE_PATH || DAHDI_CONSTANTS.DEVICE_PATH,
+                sampleRate: DAHDI_CONSTANTS.SAMPLE_RATE,
+                impedance: DAHDI_CONSTANTS.LINE_IMPEDANCE,
+                channel: parseInt(process.env.DAHDI_CHANNEL || '1')
             },
             audio: {
-                bufferSize: 320,
-                channels: 1,
-                bitDepth: 16
+                bufferSize: DAHDI_CONSTANTS.BUFFER_SIZE,
+                channels: DAHDI_CONSTANTS.CHANNELS,
+                bitDepth: DAHDI_CONSTANTS.BIT_DEPTH,
+                vadThreshold: config.audio.vadThreshold
             },
             ai: {
                 model: 'claude-3-opus-20240229',
-                apiKey: config.ai.anthropicKey
+                apiKey: config.ai.anthropicKey,
+                temperature: config.ai.temperature
             }
         };
 
@@ -72,6 +77,7 @@ export class IrohApp {
             config: this.sanitizeConfig(serviceConfig)
         });
     }
+
 
     private sanitizeConfig(config: Config): Partial<Config> {
         // Remove sensitive data for logging

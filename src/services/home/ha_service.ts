@@ -17,13 +17,7 @@ import {
 } from './types';
 
 
-interface HAServiceConfig {
-    url: string;
-    token: string;
-    entityPrefix?: string;
-    updateInterval?: number;
-    cacheTimeout?: number;
-}
+
 
 type EntityStateHandler = (entityId: string, state: HAEntity) => Promise<void>;
 
