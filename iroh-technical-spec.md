@@ -34,13 +34,13 @@ graph TD
 ```typescript
 interface PhoneController {
   // Lifecycle
-  start(): Promise<void>;
-  stop(): Promise<void>;
+  start(): Promise;
+  stop(): Promise;
   
   // Hardware Control
-  playTone(type: string): Promise<void>;
-  playAudio(buffer: Buffer): Promise<void>;
-  ring(duration?: number): Promise<void>;
+  playTone(type: string): Promise;
+  playAudio(buffer: Buffer): Promise;
+  ring(duration?: number): Promise;
   
   // State
   getState(): PhoneState;
@@ -52,6 +52,31 @@ interface PhoneController {
   on(event: 'dtmf', handler: (event: DTMFEvent) => void): void;
   on(event: 'voice', handler: (event: VoiceEvent) => void): void;
   on(event: 'error', handler: (error: Error) => void): void;
+}
+```
+
+### PhoneFeedbackHandler
+
+```typescript
+interface PhoneFeedbackHandler {
+  // Feedback Methods
+  handleError(error: Error, context: any, options?: FeedbackOptions): Promise;
+  provideProgressFeedback(progress: number): Promise;
+  handleRecovery(success: boolean): Promise;
+  
+  // Audio Control
+  playErrorTone(severity: 'low' | 'medium' | 'high' | 'critical'): Promise;
+  interrupt(): void;
+
+  // Events
+  on(event: 'feedback', handler: (data: any) => void): void;
+  on(event: 'interrupt', handler: () => void): void;
+}
+
+interface FeedbackOptions {
+  playTones: boolean;
+  useVoice: boolean;
+  waitForCompletion: boolean;
 }
 ```
 

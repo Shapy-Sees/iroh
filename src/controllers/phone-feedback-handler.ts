@@ -1,54 +1,69 @@
 // src/controllers/phone-feedback-handler.ts
 //
-// Key Features:
-// - Combines voice and tone feedback
-// - Manages feedback timing
-// - Handles interrupt scenarios
-// - Provides audio cues
-// - Maintains conversation flow
-// - Error state recovery
+// Manages audio and voice feedback for the phone system, coordinating between
+// the DAHDI hardware interface, AI service, and tone generation.
+// Handles feedback queuing, interruption, error recovery, and DAHDI format compatibility.
 
 import { EventEmitter } from 'events';
-import { ErrorFeedback } from '../utils/error-messages';
-import { IrohAIService } from '../services/ai/ai-service';
-import { logger } from '../utils/logger';
 import { DAHDIInterface } from '../hardware/dahdi-interface';
+import { IrohAIService } from '../services/ai/ai-service';
+import { ErrorMessages } from '../utils/error-messages';
+import { logger } from '../utils/logger';
+import { EVENTS, TIMEOUTS } from '../core/constants';
 
 interface FeedbackOptions {
+    /** Whether to play audio tones */
     playTones: boolean;
+    /** Whether to use voice feedback */
     useVoice: boolean;
+    /** Whether to wait for current feedback to complete */
     waitForCompletion: boolean;
 }
 
+interface TonePattern {
+    frequency?: number;
+    duration?: number;
+    pause?: number;
+    level?: number;
+}
+
 export class PhoneFeedbackHandler extends EventEmitter {
-    private errorFeedback: ErrorFeedback;
-    private aiService: IrohAIService;
-    private dahdi: DAHDIInterface;
+    private readonly dahdi: DAHDIInterface;
+    private readonly aiService: IrohAIService;
+    private readonly errorMessages: ErrorMessages;
     private isPlaying: boolean = false;
     private feedbackQueue: Array<() => Promise<void>> = [];
+    private currentFeedback: Promise<void> | null = null;
 
-    // Tone patterns for different scenarios
+    // DAHDI-compatible tone patterns
     private readonly tonePatterns = {
         error: [
-            { frequency: 480, duration: 200 },
-            { frequency: 620, duration: 200 }
+            { frequency: 480, duration: 200, level: -10 },
+            { frequency: 620, duration: 200, level: -10 }
         ],
         warning: [
-            { frequency: 440, duration: 100 },
+            { frequency: 440, duration: 100, level: -10 },
             { pause: 100 },
-            { frequency: 440, duration: 100 }
+            { frequency: 440, duration: 100, level: -10 }
         ],
         processing: [
-            { frequency: 350, duration: 100 },
+            { frequency: 350, duration: 100, level: -10 },
             { pause: 2000 }
+        ],
+        success: [
+            { frequency: 600, duration: 100, level: -10 },
+            { pause: 50 },
+            { frequency: 800, duration: 200, level: -10 }
         ]
     };
 
     constructor(aiService: IrohAIService, dahdi: DAHDIInterface) {
         super();
-        this.errorFeedback = new ErrorFeedback();
         this.aiService = aiService;
         this.dahdi = dahdi;
+        this.errorMessages = new ErrorMessages();
+
+        logger.info('Phone feedback handler initialized');
     }
 
     public async handleError(error: Error, context: any, options: Partial<FeedbackOptions> = {}): Promise<void> {
@@ -61,12 +76,18 @@ export class PhoneFeedbackHandler extends EventEmitter {
         const feedbackOptions = { ...defaultOptions, ...options };
 
         try {
-            // Generate error message
-            const message = await this.errorFeedback.generateFeedback(error, {
+            // Generate appropriate error message
+            const message = await this.errorMessages.generateFeedback(error, {
                 severity: this.determineSeverity(error),
                 component: context.component,
                 retryCount: context.retryCount || 0,
                 isRecoverable: this.isErrorRecoverable(error)
+            });
+
+            logger.debug('Providing error feedback', {
+                error: error.message,
+                severity: this.determineSeverity(error),
+                message
             });
 
             // Add feedback to queue
@@ -108,9 +129,12 @@ export class PhoneFeedbackHandler extends EventEmitter {
             const feedback = this.feedbackQueue.shift();
             if (feedback) {
                 try {
-                    await feedback();
+                    this.currentFeedback = feedback();
+                    await this.currentFeedback;
                 } catch (error) {
                     logger.error('Error processing feedback:', error);
+                } finally {
+                    this.currentFeedback = null;
                 }
             }
         }
@@ -134,30 +158,34 @@ export class PhoneFeedbackHandler extends EventEmitter {
         await this.playTonePattern(pattern);
     }
 
-    private async playTonePattern(pattern: Array<any>): Promise<void> {
+    private async playTonePattern(pattern: TonePattern[]): Promise<void> {
         for (const tone of pattern) {
-            if (tone.pause) {
-                await new Promise(resolve => setTimeout(resolve, tone.pause));
-            } else {
-                // Use DAHDI interface for tone generation
-                await this.dahdi.generateTone({
-                    frequency: tone.frequency,
-                    duration: tone.duration,
-                    level: -10  // dBm0 level for DAHDI
-                });
+            try {
+                if (tone.pause) {
+                    await new Promise(resolve => setTimeout(resolve, tone.pause));
+                } else if (tone.frequency) {
+                    await this.dahdi.generateTone({
+                        frequency: tone.frequency,
+                        duration: tone.duration || TIMEOUTS.DTMF,
+                        level: tone.level || -10 // Default DAHDI level
+                    });
+                }
+            } catch (error) {
+                logger.error('Error playing tone pattern:', error);
+                throw error;
             }
         }
-    }
-
-    private async playTone(frequency: number, duration: number): Promise<void> {
-        // Implementation depends on your audio hardware interface
-        this.emit('tone', { frequency, duration });
     }
 
     private async playAudio(audio: Buffer): Promise<void> {
         try {
             // Play through DAHDI interface
-            await this.dahdi.playAudio(audio);
+            await this.dahdi.playAudio(audio, {
+                sampleRate: 8000,  // DAHDI requires 8kHz
+                channels: 1,       // DAHDI is mono
+                bitDepth: 16,      // DAHDI uses 16-bit PCM
+                format: 'linear'   // Linear PCM format
+            });
         } catch (error) {
             logger.error('Error playing audio through DAHDI:', error);
             throw error;
@@ -166,92 +194,57 @@ export class PhoneFeedbackHandler extends EventEmitter {
 
     public async provideProgressFeedback(progress: number): Promise<void> {
         if (progress < 1) {
-            const message = this.errorFeedback.getProgressMessage(progress);
-            const speech = await this.aiService.generateSpeech(message);
-            await this.playAudio(speech);
+            try {
+                const message = this.errorMessages.getProgressMessage(progress);
+                const speech = await this.aiService.generateSpeech(message);
+                await this.playAudio(speech);
+            } catch (error) {
+                logger.error('Error providing progress feedback:', error);
+                await this.playErrorTone('low');
+            }
         }
     }
 
     public async handleRecovery(success: boolean): Promise<void> {
-        const message = await this.errorFeedback.handleRecovery(success);
-        const speech = await this.aiService.generateSpeech(message);
-        await this.playAudio(speech);
+        try {
+            const message = await this.errorMessages.handleRecovery(success);
+            const speech = await this.aiService.generateSpeech(message);
+            await this.playAudio(speech);
+        } catch (error) {
+            logger.error('Error handling recovery feedback:', error);
+            await this.playTonePattern(
+                success ? this.tonePatterns.success : this.tonePatterns.error
+            );
+        }
     }
 
     private determineSeverity(error: Error): 'low' | 'medium' | 'high' | 'critical' {
-        // Implement severity determination logic based on error type
-        return 'medium';
+        // Determine severity based on error type and context
+        if (error.name.includes('DAHDI')) {
+            return 'high';
+        }
+        if (error.name.includes('Hardware')) {
+            return 'critical';
+        }
+        if (error.name.includes('Audio')) {
+            return 'medium';
+        }
+        return 'low';
     }
 
     private isErrorRecoverable(error: Error): boolean {
-        // Implement recoverability check logic
-        return true;
+        // Determine if error is recoverable based on type
+        return !error.name.includes('Critical') && 
+               !error.name.includes('Fatal');
     }
 
     public interrupt(): void {
+        // Clear feedback queue and stop current feedback
         this.feedbackQueue = [];
-        this.isPlaying = false;
-        this.emit('interrupted');
-    }
-}
-
-// Example integration with PhoneController
-export class PhoneController {
-    private feedbackHandler: PhoneFeedbackHandler;
-
-    constructor(config: any) {
-        this.feedbackHandler = new PhoneFeedbackHandler(config.ai, config.dahdi);
-        this.setupFeedbackHandlers();
-    }
-
-    private setupFeedbackHandlers(): void {
-        this.feedbackHandler.on('tone', async ({ frequency, duration }) => {
-            try {
-                // Play tone through phone hardware
-                await this.playToneOnPhone(frequency, duration);
-            } catch (error) {
-                logger.error('Error playing tone:', error);
-            }
-        });
-
-        this.feedbackHandler.on('audio', async (audio: Buffer) => {
-            try {
-                // Play audio through phone hardware
-                await this.playAudioOnPhone(audio);
-            } catch (error) {
-                logger.error('Error playing audio:', error);
-            }
-        });
-
-        // Handle errors with appropriate feedback
-        this.on('error', async (error: Error, context: any) => {
-            await this.feedbackHandler.handleError(error, context, {
-                playTones: true,
-                useVoice: true,
-                waitForCompletion: true
-            });
-        });
-    }
-
-    private async playToneOnPhone(frequency: number, duration: number): Promise<void> {
-        // Implementation for playing tones through phone hardware
-    }
-
-    private async playAudioOnPhone(audio: Buffer): Promise<void> {
-        // Implementation for playing audio through phone hardware
-    }
-
-    // Example error handling scenario
-    public async handleCommand(command: string): Promise<void> {
-        try {
-            // Attempt to execute command
-            await this.executeCommand(command);
-        } catch (error) {
-            await this.feedbackHandler.handleError(error, {
-                component: 'command',
-                command,
-                retryCount: 0
-            });
+        if (this.currentFeedback) {
+            this.currentFeedback = null;
         }
+        this.isPlaying = false;
+        this.emit(EVENTS.SYSTEM.INTERRUPT);
     }
 }

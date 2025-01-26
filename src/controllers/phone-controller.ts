@@ -1,25 +1,37 @@
 // src/controllers/phone-controller.ts
 //
-// Phone controller that manages DAHDI hardware interface and phone state.
-// This controller is responsible for:
-// - Managing phone state transitions
+// Enhanced phone controller that manages DAHDI hardware interface and phone state.
+// Key responsibilities:
+// - Managing phone state transitions using FSM pattern
 // - Processing DTMF and voice commands
-// - Coordinating audio streaming
-// - Handling hardware events and errors
-// - Providing real-time phone status
+// - Coordinating audio streaming with DAHDI format requirements
+// - Hardware health monitoring and error recovery
+// - Providing real-time phone status and diagnostics
 
 import { EventEmitter } from 'events';
-import { HardwareService } from '../services/hardware/hardware-service';
+import { DAHDIInterface } from '../hardware/dahdi-interface';
 import { DTMFDetector } from '../audio/dtmf-detector';
-import { AIService } from '../services/ai/ai-service';
-import { AudioInput, PhoneControllerConfig, DTMFEvent, VoiceEvent } from '../types';
-import { logger } from '../utils/logger';
+import { VoiceDetector } from '../audio/voice-detector';
+import { AudioPipeline } from '../audio/pipeline';
+import { IrohAIService } from '../services/ai/ai-service';
 import { 
+    AudioInput, 
+    PhoneControllerConfig, 
+    DTMFEvent, 
+    VoiceEvent,
+    DAHDIAudioFormat,
+    AudioFormatError
+} from '../types';
+import { logger } from '../utils/logger';
+import { ErrorHandler } from '../utils/error-handler';
+import { PhoneFeedbackHandler } from './phone-feedback-handler';
+import {
     EVENTS,
     ERROR_CODES,
     TIMEOUTS,
     DEFAULTS,
-    DAHDI_ALARMS 
+    DAHDI_ALARMS,
+    DAHDI_COMMANDS
 } from '../core/constants';
 
 // Phone states based on DAHDI hardware states
@@ -32,88 +44,69 @@ enum PhoneState {
 }
 
 export class PhoneController extends EventEmitter {
-    private hardware: HardwareService;
+    private dahdi: DAHDIInterface;
     private dtmfDetector: DTMFDetector;
-    private aiService: AIService | null = null;
+    private voiceDetector: VoiceDetector;
+    private audioPipeline: AudioPipeline;
+    private aiService: IrohAIService | null = null;
+    private feedback: PhoneFeedback;
+    private errorHandler: ErrorHandler;
     private currentState: PhoneState = PhoneState.IDLE;
     private commandBuffer: string[] = [];
     private lastCommandTime: number = 0;
     private isProcessingCommand: boolean = false;
     private alarmState: number = DAHDI_ALARMS.NONE;
-    private readonly stateTransitions: Map<PhoneState, Set<PhoneState>>;
-    private eventHandlers: Map<string, Set<Function>>;
     
-    private readonly config: Required<PhoneControllerConfig> = {
-        fxs: {
-            devicePath: DEFAULTS.DAHDI.DEVICE_PATH,
-            sampleRate: DEFAULTS.AUDIO.SAMPLE_RATE,
-            channels: DEFAULTS.AUDIO.CHANNELS,
-            bitDepth: DEFAULTS.AUDIO.BIT_DEPTH
-        },
-        audio: {
-            bufferSize: DEFAULTS.AUDIO.BUFFER_SIZE,
-            channels: DEFAULTS.AUDIO.CHANNELS,
-            bitDepth: DEFAULTS.AUDIO.BIT_DEPTH,
-        },
-        ai: {},
-        dtmf: {
-            minDuration: TIMEOUTS.DTMF,
-            threshold: 0.25
-        }
+    private readonly stateTransitions: Map<PhoneState, Set<PhoneState>>;
+    private readonly dahdiFormat: DAHDIAudioFormat = {
+        sampleRate: 8000,    // DAHDI requires 8kHz
+        channels: 1,         // DAHDI is mono
+        bitDepth: 16,        // DAHDI uses 16-bit PCM
+        format: 'linear'     // Linear PCM format
     };
 
-    constructor(config: Partial<PhoneControllerConfig>) {
+    constructor(config: PhoneControllerConfig) {
         super();
-        
-        // Initialize state transition map
-        this.stateTransitions = this.initializeStateTransitions();
-        
-        // Initialize event handler map
-        this.eventHandlers = new Map();
-        
-        // Merge provided config with defaults
-        this.config = {
-            ...this.config,
-            ...config,
-            fxs: { ...this.config.fxs, ...config.fxs },
-            audio: { ...this.config.audio, ...config.audio },
-            ai: { ...this.config.ai, ...config.ai }
-        };
-
         logger.debug('Initializing phone controller', {
-            config: this.sanitizeConfig(this.config)
+            config: this.sanitizeConfig(config)
         });
 
-        // Initialize hardware service
-        this.hardware = new HardwareService({
-            devicePath: this.config.fxs.devicePath,
-            sampleRate: this.config.fxs.sampleRate,
-            channels: this.config.audio.channels,
-            bitDepth: this.config.audio.bitDepth,
-            bufferSize: this.config.audio.bufferSize
-        });
-        
-        // Initialize DTMF detector with DAHDI settings
-        this.dtmfDetector = new DTMFDetector({
-            sampleRate: this.config.fxs.sampleRate,
-            minDuration: this.config.dtmf.minDuration,
-            threshold: this.config.dtmf.threshold,
-            bufferSize: this.config.audio.bufferSize
+        // Initialize DAHDI interface
+        this.dahdi = new DAHDIInterface({
+            devicePath: config.fxs.devicePath,
+            sampleRate: this.dahdiFormat.sampleRate,
+            channels: this.dahdiFormat.channels,
+            bitDepth: this.dahdiFormat.bitDepth,
+            bufferSize: config.audio.bufferSize
         });
 
         // Initialize AI service if configured
         if (config.ai?.apiKey) {
-            this.aiService = new AIService(config.ai);
+            this.aiService = new IrohAIService(config.ai);
         }
-        
+
+        // Initialize feedback and error handling
+        this.feedback = new PhoneFeedbackHandler(this.aiService!, this.dahdi);
+        this.errorHandler = new ErrorHandler();
+
+        // Initialize state transition map
+        this.stateTransitions = this.initializeStateTransitions();
+
         // Set up event handlers
         this.setupEventHandlers();
+    }
+
+    private sanitizeConfig(config: PhoneControllerConfig): Partial<PhoneControllerConfig> {
+        return {
+            ...config,
+            fxs: { ...config.fxs, devicePath: '***' },
+            ai: config.ai ? { ...config.ai, apiKey: '***' } : undefined
+        };
     }
 
     private initializeStateTransitions(): Map<PhoneState, Set<PhoneState>> {
         const transitions = new Map<PhoneState, Set<PhoneState>>();
         
-        // Define valid state transitions
         transitions.set(PhoneState.IDLE, new Set([
             PhoneState.OFF_HOOK,
             PhoneState.RINGING,
@@ -147,122 +140,106 @@ export class PhoneController extends EventEmitter {
 
     private setupEventHandlers(): void {
         // Handle DAHDI hardware events
-        this.hardware.on(EVENTS.DAHDI.ALARM, (alarmType: number) => {
+        this.dahdi.on(EVENTS.DAHDI.ALARM, (alarmType: number) => {
             this.handleAlarmState(alarmType);
-        });
-
-        this.hardware.on(EVENTS.PHONE.RING_START, () => {
-            this.handleRingStart();
-        });
-
-        this.hardware.on(EVENTS.PHONE.RING_STOP, () => {
-            this.handleRingStop();
         });
 
         // Handle hook state changes with debouncing
         let hookDebounceTimer: NodeJS.Timeout | null = null;
         const HOOK_DEBOUNCE_TIME = 100; // ms
 
-        this.hardware.on(EVENTS.PHONE.OFF_HOOK, () => {
-            if (hookDebounceTimer) {
-                clearTimeout(hookDebounceTimer);
-            }
-            hookDebounceTimer = setTimeout(() => {
-                this.handleOffHook();
-            }, HOOK_DEBOUNCE_TIME);
+        this.dahdi.on(EVENTS.PHONE.OFF_HOOK, () => {
+            if (hookDebounceTimer) clearTimeout(hookDebounceTimer);
+            hookDebounceTimer = setTimeout(() => this.handleOffHook(), HOOK_DEBOUNCE_TIME);
         });
 
-        this.hardware.on(EVENTS.PHONE.ON_HOOK, () => {
-            if (hookDebounceTimer) {
-                clearTimeout(hookDebounceTimer);
-            }
-            hookDebounceTimer = setTimeout(() => {
-                this.handleOnHook();
-            }, HOOK_DEBOUNCE_TIME);
+        this.dahdi.on(EVENTS.PHONE.ON_HOOK, () => {
+            if (hookDebounceTimer) clearTimeout(hookDebounceTimer);
+            hookDebounceTimer = setTimeout(() => this.handleOnHook(), HOOK_DEBOUNCE_TIME);
         });
 
         // Handle audio events with error recovery
-        this.hardware.on('audio', async (data: AudioInput) => {
+        this.dahdi.on('audio', async (data: AudioInput) => {
             try {
                 await this.handleAudioData(data);
             } catch (error) {
                 logger.error('Error handling audio data:', error);
-                this.emitError(ERROR_CODES.HARDWARE.AUDIO_ERROR, error);
+                await this.errorHandler.handleError(error, {
+                    component: 'audio',
+                    operation: 'process'
+                });
             }
         });
 
-        // Handle hardware errors with recovery attempts
-        this.hardware.on(EVENTS.SYSTEM.ERROR, async (error: Error) => {
-            logger.error('Hardware error:', error);
-            await this.handleHardwareError(error);
+        // Handle DTMF events
+        this.dtmfDetector.on('dtmf', async (event: DTMFEvent) => {
+            try {
+                await this.handleDTMF(event);
+            } catch (error) {
+                logger.error('Error handling DTMF:', error);
+                await this.errorHandler.handleError(error, {
+                    component: 'dtmf',
+                    operation: 'process'
+                });
+            }
         });
 
-        // Handle DTMF events with validation
-        this.dtmfDetector.on('dtmf', (event: DTMFEvent) => {
-            if (this.validateDTMF(event)) {
-                this.handleDTMF(event).catch(error => {
-                    logger.error('Error handling DTMF:', error);
-                    this.emitError(ERROR_CODES.HARDWARE.DTMF_ERROR, error);
+        // Handle voice events
+        this.voiceDetector.on('voice', async (event: VoiceEvent) => {
+            try {
+                await this.handleVoice(event);
+            } catch (error) {
+                logger.error('Error handling voice:', error);
+                await this.errorHandler.handleError(error, {
+                    component: 'voice',
+                    operation: 'process'
                 });
             }
         });
     }
 
-    public on(event: string, handler: Function): this {
-        // Add to our custom event handler map
-        const handlers = this.eventHandlers.get(event) || new Set();
-        handlers.add(handler);
-        this.eventHandlers.set(event, handlers);
-        
-        // Also register with EventEmitter
-        super.on(event, handler as any);
-        return this;
-    }
+    private async handleAlarmState(alarmType: number): Promise<void> {
+        this.alarmState = alarmType;
+        logger.warn('DAHDI alarm state changed:', {
+            alarmType,
+            description: this.getAlarmDescription(alarmType)
+        });
 
-    public off(event: string, handler: Function): this {
-        // Remove from our custom event handler map
-        const handlers = this.eventHandlers.get(event);
-        if (handlers) {
-            handlers.delete(handler);
-            if (handlers.size === 0) {
-                this.eventHandlers.delete(event);
-            }
-        }
-        
-        // Also remove from EventEmitter
-        super.off(event, handler as any);
-        return this;
-    }
-
-    private async emitEvent(event: string, data?: any): Promise<void> {
-        // Get handlers for this event
-        const handlers = this.eventHandlers.get(event);
-        if (handlers) {
-            // Execute all handlers
-            const promises = Array.from(handlers).map(handler => {
-                try {
-                    return Promise.resolve(handler(data));
-                } catch (error) {
-                    logger.error(`Error in event handler for ${event}:`, error);
-                    return Promise.reject(error);
+        if (alarmType & DAHDI_ALARMS.RED) {
+            await this.setState(PhoneState.ERROR);
+            await this.errorHandler.handleError(
+                new Error('Lost signal on DAHDI device'),
+                {
+                    component: 'dahdi',
+                    operation: 'signal',
+                    severity: 'high'
                 }
-            });
-            
-            // Wait for all handlers to complete
-            await Promise.allSettled(promises);
+            );
         }
-        
-        // Emit through EventEmitter
-        this.emit(event, data);
+
+        if (alarmType & DAHDI_ALARMS.NOTOPEN) {
+            await this.setState(PhoneState.ERROR);
+            await this.errorHandler.handleError(
+                new Error('DAHDI device not opened'),
+                {
+                    component: 'dahdi',
+                    operation: 'device',
+                    severity: 'critical'
+                }
+            );
+        }
     }
 
-    private emitError(code: string, error: Error): void {
-        const errorEvent = {
-            code,
-            error,
-            timestamp: Date.now()
-        };
-        this.emit(EVENTS.SYSTEM.ERROR, errorEvent);
+    private getAlarmDescription(alarmType: number): string {
+        const alarms: string[] = [];
+        if (alarmType & DAHDI_ALARMS.RED) alarms.push('RED_ALARM');
+        if (alarmType & DAHDI_ALARMS.YELLOW) alarms.push('YELLOW_ALARM');
+        if (alarmType & DAHDI_ALARMS.BLUE) alarms.push('BLUE_ALARM');
+        if (alarmType & DAHDI_ALARMS.NOTOPEN) alarms.push('DEVICE_NOT_OPEN');
+        if (alarmType & DAHDI_ALARMS.RESET) alarms.push('NEEDS_RESET');
+        if (alarmType & DAHDI_ALARMS.LOOPBACK) alarms.push('IN_LOOPBACK');
+        if (alarmType & DAHDI_ALARMS.RECOVERING) alarms.push('RECOVERING');
+        return alarms.join(', ') || 'NO_ALARM';
     }
 
     private async setState(newState: PhoneState): Promise<void> {
@@ -283,66 +260,40 @@ export class PhoneController extends EventEmitter {
         });
 
         // Emit state change event
-        await this.emitEvent('stateChange', { oldState, newState });
-    }
-
-    private handleAlarmState(alarmType: number): void {
-        this.alarmState = alarmType;
-        logger.warn('DAHDI alarm state changed:', {
-            alarmType,
-            description: this.getAlarmDescription(alarmType)
-        });
-
-        // Handle specific alarm conditions
-        if (alarmType & DAHDI_ALARMS.RED) {
-            this.setState(PhoneState.ERROR);
-            this.emit(EVENTS.SYSTEM.ERROR, {
-                code: ERROR_CODES.HARDWARE.DAHDI_SYNC_ERROR,
-                message: 'Lost signal on DAHDI device'
-            });
-        }
-
-        if (alarmType & DAHDI_ALARMS.NOTOPEN) {
-            this.setState(PhoneState.ERROR);
-            this.emit(EVENTS.SYSTEM.ERROR, {
-                code: ERROR_CODES.HARDWARE.DAHDI_DEVICE_NOT_FOUND,
-                message: 'DAHDI device not opened'
-            });
-        }
-    }
-
-    private getAlarmDescription(alarmType: number): string {
-        const alarms: string[] = [];
-        if (alarmType & DAHDI_ALARMS.RED) alarms.push('RED_ALARM');
-        if (alarmType & DAHDI_ALARMS.YELLOW) alarms.push('YELLOW_ALARM');
-        if (alarmType & DAHDI_ALARMS.BLUE) alarms.push('BLUE_ALARM');
-        if (alarmType & DAHDI_ALARMS.NOTOPEN) alarms.push('DEVICE_NOT_OPEN');
-        if (alarmType & DAHDI_ALARMS.RESET) alarms.push('NEEDS_RESET');
-        if (alarmType & DAHDI_ALARMS.LOOPBACK) alarms.push('IN_LOOPBACK');
-        if (alarmType & DAHDI_ALARMS.RECOVERING) alarms.push('RECOVERING');
-        return alarms.join(', ') || 'NO_ALARM';
-    }
-
-    private setState(newState: PhoneState): void {
-        const oldState = this.currentState;
-        this.currentState = newState;
-        
-        logger.info('Phone state changed', {
-            from: oldState,
-            to: newState
-        });
-
         this.emit('stateChange', { oldState, newState });
+
+        // Handle state-specific actions
+        switch (newState) {
+            case PhoneState.IDLE:
+                this.commandBuffer = [];
+                break;
+            case PhoneState.ERROR:
+                await this.feedback.error();
+                break;
+        }
     }
 
     private async handleOffHook(): Promise<void> {
         logger.info('Phone off hook detected');
-        this.setState(PhoneState.OFF_HOOK);
+        await this.setState(PhoneState.OFF_HOOK);
         this.commandBuffer = [];
 
         try {
-            // Play dial tone
-            await this.playTone('dial');
+            // Play dial tone through DAHDI
+            await this.dahdi.generateTone({
+                frequency: 350,
+                duration: -1, // Continuous
+                level: -10  // dBm0 level
+            });
+
+            // Play greeting if AI service is available
+            if (this.aiService) {
+                await this.feedback.playTonePattern([
+                    { frequency: 350, duration: 200 },
+                    { frequency: 440, duration: 200 }
+                ]);
+            }
+
             this.emit(EVENTS.PHONE.OFF_HOOK);
         } catch (error) {
             logger.error('Error handling off hook:', error);
@@ -352,57 +303,71 @@ export class PhoneController extends EventEmitter {
 
     private async handleOnHook(): Promise<void> {
         logger.info('Phone on hook detected');
-        this.setState(PhoneState.IDLE);
+        await this.setState(PhoneState.IDLE);
         this.commandBuffer = [];
-        this.emit(EVENTS.PHONE.ON_HOOK);
+        
+        try {
+            // Stop any ongoing audio
+            await this.dahdi.stopTone();
+            this.emit(EVENTS.PHONE.ON_HOOK);
+        } catch (error) {
+            logger.error('Error handling on hook:', error);
+            await this.handleHardwareError(error);
+        }
     }
 
     private async handleAudioData(audioInput: AudioInput): Promise<void> {
         if (this.currentState === PhoneState.ERROR) return;
 
         try {
-            // Process for DTMF first
-            const dtmfResult = await this.dtmfDetector.analyze(audioInput);
-            if (dtmfResult) {
-                logger.debug('DTMF detected in audio stream', {
-                    digit: dtmfResult.digit,
-                    duration: dtmfResult.duration
-                });
-                return;
+            // Validate audio format
+            if (!this.validateAudioFormat(audioInput)) {
+                throw new AudioFormatError('Invalid audio format', [
+                    'Audio format does not meet DAHDI requirements'
+                ]);
             }
 
-            // If in call state, emit audio for further processing
-            if (this.currentState === PhoneState.IN_CALL) {
-                this.emit('audio', audioInput);
-            }
+            // Process audio through pipeline
+            await this.audioPipeline.processAudio(audioInput);
+
         } catch (error) {
             logger.error('Error processing audio data:', error);
-            this.emit(EVENTS.SYSTEM.ERROR, {
-                code: ERROR_CODES.HARDWARE.AUDIO_ERROR,
-                error
+            await this.errorHandler.handleError(error, {
+                component: 'audio',
+                operation: 'process'
             });
         }
     }
 
+    private validateAudioFormat(input: AudioInput): boolean {
+        return (
+            input.sampleRate === this.dahdiFormat.sampleRate &&
+            input.channels === this.dahdiFormat.channels &&
+            input.bitDepth === this.dahdiFormat.bitDepth
+        );
+    }
+
     private async handleHardwareError(error: Error): Promise<void> {
-        this.setState(PhoneState.ERROR);
+        await this.setState(PhoneState.ERROR);
         
         try {
             // Attempt hardware recovery
-            await this.hardware.runDiagnostics();
-            
-            // If successful, restore previous state
-            if (this.alarmState === DAHDI_ALARMS.NONE) {
-                this.setState(PhoneState.IDLE);
+            const diagnostics = await this.runDiagnostics();
+            const recoverySuccessful = diagnostics.every(test => test.passed);
+
+            if (recoverySuccessful && this.alarmState === DAHDI_ALARMS.NONE) {
+                await this.setState(PhoneState.IDLE);
                 logger.info('Hardware recovery successful');
+                await this.feedback.acknowledge('recovery', 'success');
             } else {
-                throw new Error('Hardware still in alarm state');
+                throw new Error('Hardware recovery failed');
             }
         } catch (recoveryError) {
             logger.error('Hardware recovery failed:', recoveryError);
-            this.emit(EVENTS.SYSTEM.ERROR, {
-                code: ERROR_CODES.HARDWARE.DAHDI_DEVICE_ERROR,
-                error: recoveryError
+            await this.errorHandler.handleError(recoveryError, {
+                component: 'hardware',
+                operation: 'recovery',
+                severity: 'critical'
             });
         }
     }
@@ -411,19 +376,45 @@ export class PhoneController extends EventEmitter {
         try {
             logger.info('Starting phone controller');
             
-            // Initialize hardware service
-            await this.hardware.initialize();
+            // Initialize DAHDI interface
+            await this.dahdi.start();
+            
+            // Initialize audio pipeline
+            this.audioPipeline.addHandler('dtmf', 
+                event => this.dtmfDetector.processBuffer(event.data)
+            );
+            this.audioPipeline.addHandler('voice',
+                event => this.voiceDetector.analyze(event)
+            );
             
             // Reset state
-            this.setState(PhoneState.IDLE);
+            await this.setState(PhoneState.IDLE);
             this.commandBuffer = [];
             this.lastCommandTime = 0;
             
-            this.emit(EVENTS.SYSTEM.READY);
             logger.info('Phone controller started successfully');
+            this.emit(EVENTS.SYSTEM.READY);
         } catch (error) {
             logger.error('Failed to start phone controller:', error);
             throw error;
+        }
+    }
+
+    public async playAudio(buffer: Buffer): Promise<void> {
+        if (this.currentState === PhoneState.ERROR) {
+            logger.warn('Cannot play audio - phone in error state');
+            return;
+        }
+
+        try {
+            await this.dahdi.playAudio(buffer, this.dahdiFormat);
+            logger.debug('Played audio buffer', { bytes: buffer.length });
+        } catch (error) {
+            logger.error('Error playing audio:', error);
+            await this.errorHandler.handleError(error, {
+                component: 'audio',
+                operation: 'playback'
+            });
         }
     }
 
@@ -440,26 +431,14 @@ export class PhoneController extends EventEmitter {
                 throw new Error(`Unknown tone type: ${type}`);
             }
 
-            await this.hardware.playTone(toneConfig);
+            await this.dahdi.generateTone(toneConfig);
             logger.debug('Played tone', { type });
         } catch (error) {
             logger.error('Error playing tone:', error);
-            throw error;
-        }
-    }
-
-    public async playAudio(buffer: Buffer): Promise<void> {
-        if (this.currentState === PhoneState.ERROR) {
-            logger.warn('Cannot play audio - phone in error state');
-            return;
-        }
-
-        try {
-            await this.hardware.playAudio(buffer);
-            logger.debug('Played audio buffer', { bytes: buffer.length });
-        } catch (error) {
-            logger.error('Error playing audio:', error);
-            throw error;
+            await this.errorHandler.handleError(error, {
+                component: 'audio',
+                operation: 'tone'
+            });
         }
     }
 
@@ -470,11 +449,197 @@ export class PhoneController extends EventEmitter {
         }
 
         try {
-            await this.hardware.ring(duration);
+            await this.setState(PhoneState.RINGING);
+            await this.dahdi.ring(duration);
             logger.debug('Ring initiated', { duration });
+
+            // Reset state after ring completes
+            setTimeout(async () => {
+                if (this.currentState === PhoneState.RINGING) {
+                    await this.setState(PhoneState.IDLE);
+                }
+            }, duration);
         } catch (error) {
             logger.error('Error initiating ring:', error);
+            await this.handleHardwareError(error);
+        }
+    }
+
+    private async handleDTMF(event: DTMFEvent): Promise<void> {
+        if (this.currentState !== PhoneState.OFF_HOOK && 
+            this.currentState !== PhoneState.IN_CALL) {
+            return;
+        }
+
+        logger.debug('DTMF detected', {
+            digit: event.digit,
+            duration: event.duration
+        });
+
+        try {
+            // Add to command buffer
+            this.commandBuffer.push(event.digit);
+            this.lastCommandTime = Date.now();
+
+            // Play feedback tone
+            await this.playTone('dtmf');
+
+            // Check for complete command
+            await this.checkCommand();
+
+            // Emit DTMF event
+            this.emit(EVENTS.PHONE.DTMF, event);
+        } catch (error) {
+            logger.error('Error handling DTMF:', error);
+            await this.errorHandler.handleError(error, {
+                component: 'dtmf',
+                operation: 'process'
+            });
+        }
+    }
+
+    private async handleVoice(event: VoiceEvent): Promise<void> {
+        if (this.currentState !== PhoneState.IN_CALL) {
+            return;
+        }
+
+        logger.debug('Voice detected', {
+            duration: event.endTime - event.startTime,
+            final: event.isFinal
+        });
+
+        try {
+            if (this.aiService && event.isFinal) {
+                // Convert speech to text
+                const text = await this.aiService.processVoice(event.audio);
+                
+                // Process command
+                const response = await this.aiService.processText(text);
+                
+                // Generate speech response
+                const audio = await this.aiService.generateSpeech(response);
+                
+                // Play response
+                await this.playAudio(audio);
+            }
+
+            // Emit voice event
+            this.emit(EVENTS.PHONE.VOICE, event);
+        } catch (error) {
+            logger.error('Error handling voice:', error);
+            await this.errorHandler.handleError(error, {
+                component: 'voice',
+                operation: 'process'
+            });
+        }
+    }
+
+    private async checkCommand(): Promise<void> {
+        // Check if we have a complete command sequence
+        if (this.commandBuffer.length >= 2 && 
+            Date.now() - this.lastCommandTime > TIMEOUTS.COMMAND) {
+            
+            const command = this.commandBuffer.join('');
+            this.commandBuffer = [];
+            
+            try {
+                await this.executeCommand(command);
+            } catch (error) {
+                logger.error('Error executing command:', error);
+                await this.errorHandler.handleError(error, {
+                    component: 'command',
+                    operation: 'execute',
+                    command
+                });
+            }
+        }
+    }
+
+    private async executeCommand(command: string): Promise<void> {
+        if (this.isProcessingCommand) {
+            logger.warn('Command already in progress, ignoring:', command);
+            return;
+        }
+
+        this.isProcessingCommand = true;
+        logger.info('Executing command:', command);
+
+        try {
+            // Execute command implementation
+            await this.feedback.provideProgressFeedback(0.5);
+            
+            // Command success feedback
+            await this.feedback.handleRecovery(true);
+        } catch (error) {
+            logger.error('Command execution failed:', error);
+            await this.feedback.handleError(error, {
+                component: 'command',
+                operation: 'execute',
+                command
+            });
             throw error;
+        } finally {
+            this.isProcessingCommand = false;
+        }
+    }
+
+    public async runDiagnostics(): Promise<Array<{
+        test: string;
+        passed: boolean;
+        message?: string;
+    }>> {
+        logger.info('Running phone diagnostics');
+
+        try {
+            const results = [];
+
+            // Test DAHDI status
+            results.push({
+                test: 'DAHDI Interface',
+                passed: this.dahdi.isOpen(),
+                message: this.dahdi.isOpen() ? 
+                    'DAHDI interface active' : 
+                    'DAHDI interface inactive'
+            });
+
+            // Test audio path
+            const audioTest = await this.testAudioPath();
+            results.push(audioTest);
+
+            // Test DTMF detection
+            results.push({
+                test: 'DTMF Detection',
+                passed: Boolean(this.dtmfDetector),
+                message: 'DTMF detector initialized'
+            });
+
+            return results;
+        } catch (error) {
+            logger.error('Diagnostics failed:', error);
+            throw error;
+        }
+    }
+
+    private async testAudioPath(): Promise<{
+        test: string;
+        passed: boolean;
+        message: string;
+    }> {
+        try {
+            // Generate and play test tone
+            await this.playTone('test');
+            return {
+                test: 'Audio Path',
+                passed: true,
+                message: 'Audio path test successful'
+            };
+        } catch (error) {
+            return {
+                test: 'Audio Path',
+                passed: false,
+                message: `Audio path test failed: ${error instanceof Error ? 
+                    error.message : String(error)}`
+            };
         }
     }
 
@@ -486,8 +651,12 @@ export class PhoneController extends EventEmitter {
         return this.alarmState;
     }
 
-    public async runDiagnostics(): Promise<any> {
-        return await this.hardware.runDiagnostics();
+    public isOpen(): boolean {
+        return this.dahdi.isOpen();
+    }
+
+    public getFXSInterface(): DAHDIInterface {
+        return this.dahdi;
     }
 
     public async stop(): Promise<void> {
@@ -495,12 +664,16 @@ export class PhoneController extends EventEmitter {
             logger.info('Stopping phone controller');
             
             // Stop all subsystems
-            await this.hardware.shutdown();
+            await this.dahdi.stop();
             this.dtmfDetector.shutdown();
+            this.voiceDetector.shutdown();
+            this.audioPipeline.shutdown();
             
             // Clear state
-            this.setState(PhoneState.IDLE);
+            await this.setState(PhoneState.IDLE);
             this.commandBuffer = [];
+            
+            // Remove all event listeners
             this.removeAllListeners();
             
             logger.info('Phone controller stopped successfully');
