@@ -10,6 +10,7 @@ import { IrohAIService } from '../services/ai/ai-service';
 import { ErrorMessages } from '../utils/error-messages';
 import { logger } from '../utils/logger';
 import { EVENTS, TIMEOUTS } from '../core/constants';
+import { ServiceError } from '../types/core';
 
 interface FeedbackOptions {
     /** Whether to play audio tones */
@@ -57,10 +58,10 @@ export class PhoneFeedbackHandler extends EventEmitter {
         ]
     };
 
-    constructor(aiService: IrohAIService, dahdi: DAHDIInterface) {
+    constructor(dahdi: DAHDIInterface, options?: PhoneFeedbackOptions) {
         super();
-        this.aiService = aiService;
         this.dahdi = dahdi;
+        this.aiService = options?.aiService || new IrohAIService();
         this.errorMessages = new ErrorMessages();
 
         logger.info('Phone feedback handler initialized');

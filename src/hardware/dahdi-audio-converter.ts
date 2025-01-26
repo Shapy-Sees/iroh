@@ -14,6 +14,8 @@ import {
     AudioFormatError,
     AudioInput 
 } from '../types/dahdi';
+import { AudioError } from '../types/audio';
+import { DAHDIError } from '../types/dahdi';
 
 interface AudioConverterOptions {
     /** Buffer size for processing */

@@ -6,12 +6,13 @@
 // It includes audio settings, signaling parameters, and hardware options.
 
 import { config } from 'dotenv';
+import { ConfigurationError } from '../types/core';
 
 // Load environment variables
 config();
 
 // Let's define our FXS hardware configuration interface
-export interface FXSHardwareConfig {
+export interface FXSConfig {
     /** DAHDI device path for the FXS channel */
     devicePath: string;
     
@@ -69,7 +70,7 @@ export interface FXSHardwareConfig {
 }
 
 // Validation function for the configuration
-export function validateFXSConfig(config: FXSHardwareConfig): string[] {
+export function validateFXSConfig(config: FXSConfig): string[] {
     const errors: string[] = [];
 
     // Check DAHDI device path
@@ -110,7 +111,7 @@ export function validateFXSConfig(config: FXSHardwareConfig): string[] {
 }
 
 // Default configuration for OpenVox A400P FXS ports
-export const fxsConfig: FXSHardwareConfig = {
+export const fxsConfig: FXSConfig = {
     devicePath: process.env.FXS_DEVICE_PATH || '/dev/dahdi/channel001',
     sampleRate: 8000,
     
@@ -145,8 +146,8 @@ export const fxsConfig: FXSHardwareConfig = {
 
 // Helper function to merge custom config with defaults
 export function createFXSConfig(
-    customConfig: Partial<FXSHardwareConfig>
-): FXSHardwareConfig {
+    customConfig: Partial<FXSConfig>
+): FXSConfig {
     const merged = {
         ...fxsConfig,
         ...customConfig,
@@ -186,6 +187,19 @@ export function createFXSConfig(
 }
 
 // Export helper types for configuration
-export type FXSChannelConfig = Required<FXSHardwareConfig>['channel'];
-export type FXSAudioConfig = Required<FXSHardwareConfig>['audio'];
-export type FXSDebugConfig = Required<FXSHardwareConfig>['debug'];
+export interface FXSChannelConfig {
+    /** Channel number in DAHDI (1-based) */
+    number: number;
+    
+    /** Ring cadence in ms (on/off pairs) */
+    ringCadence: number[];
+    
+    /** Caller ID format */
+    callerIdFormat: 'bell' | 'v23' | 'dtmf';
+    
+    /** Line impedance in ohms */
+    impedance: 600 | 900;
+}
+
+export type FXSAudioConfig = Required<FXSConfig>['audio'];
+export type FXSDebugConfig = Required<FXSConfig>['debug'];

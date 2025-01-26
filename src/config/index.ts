@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger';
+import { ConfigurationError } from '../types/core';
 
 // Load environment variables
 dotenv.config();

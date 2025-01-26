@@ -10,22 +10,38 @@
 // The service manager ensures proper initialization order, handles
 // inter-service communication, and manages graceful shutdown.
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 import { IrohAIService } from './ai/ai-service';
 import { HAService } from './home/ha_service';
 import { MusicService } from './music/music-service';
 import { TimerService } from './timer/timer-service';
 import { HardwareService } from './hardware/hardware-service';
 import { IntentHandler } from './intent/intent-handler';
-import { Config, ServiceError, ServiceStatus } from '../types';
+import { Config, ServiceError } from '../types/core';
+import type { ServiceStatus } from '../types/service';
+import type { AudioBuffer } from '../types/audio';
+import type { HAEvent } from '../types/service/home';
 import { logger } from '../utils/logger';
 import { PhoneController } from '../controllers/phone-controller';
+import { errorHandler } from '../utils/error-handler';
 
 interface ServiceState {
     isInitialized: boolean;
     activeServices: string[];
     lastError?: Error;
     startTime?: number;
+}
+
+interface ServiceManagerEvents {
+    'initialized': () => void;
+    'response': (audio: AudioBuffer) => void;
+    'error': (error: Error) => void;
+}
+
+export interface ServiceManager {
+    getHAEntityStatus(entity: string): Promise<any>;
+    getHAStatus(): Promise<any>;
+    callHAService(service: string, data?: any): Promise<void>;
 }
 
 export class ServiceManager extends EventEmitter {
@@ -36,12 +52,12 @@ export class ServiceManager extends EventEmitter {
     private initPromise: Promise<void> | null = null;
 
     // Core service instances
-    private aiService: IrohAIService;
-    private homeAssistant: HAService;
-    private musicService: MusicService;
-    private timerService: TimerService;
-    private hardwareService: HardwareService;
-    private intentHandler: IntentHandler;
+    private aiService!: IrohAIService;
+    private homeAssistant!: HAService;
+    private musicService!: MusicService;
+    private timerService!: TimerService;
+    private hardwareService!: HardwareService;
+    private intentHandler!: IntentHandler;
 
     constructor(config: Config, phoneController: PhoneController) {
         super();
@@ -69,10 +85,29 @@ export class ServiceManager extends EventEmitter {
 
     private createServiceInstances(): void {
         // Create core services in dependency order
-        this.hardwareService = new HardwareService(this.phoneController.getFXSInterface());
+        const dahdiConfig = {
+            devicePath: this.config.hardware.devicePath,
+            controlPath: this.config.hardware.controlPath,
+            sampleRate: 8000,
+            channels: 1,
+            bitDepth: 16,
+            bufferSize: this.config.hardware.bufferSize,
+            impedance: this.config.hardware.impedance
+        };
+        
+        this.hardwareService = new HardwareService(dahdiConfig);
         this.services.set('hardware', this.hardwareService);
 
-        this.aiService = new IrohAIService(this.config.ai);
+        // Create AI service with proper config type
+        const aiServiceConfig = {
+            anthropicKey: this.config.ai.anthropicKey,
+            elevenLabsKey: this.config.ai.elevenLabsKey,
+            maxTokens: this.config.ai.maxTokens,
+            temperature: this.config.ai.temperature,
+            model: this.config.ai.model
+        };
+        
+        this.aiService = new IrohAIService(aiServiceConfig);
         this.services.set('ai', this.aiService);
 
         this.homeAssistant = new HAService(this.config.home);
@@ -93,32 +128,43 @@ export class ServiceManager extends EventEmitter {
     }
 
     private setupEventHandlers(): void {
-        // Handle Home Assistant state changes
-        this.homeAssistant.on('state_changed', async (event) => {
+        // Type the event handlers properly
+        this.homeAssistant.addListener('state_changed', async (event: HAEvent) => {
             try {
                 await this.handleStateChange(event);
             } catch (error) {
-                logger.error('Error handling state change:', error);
+                errorHandler.handleError(error, {
+                    component: 'ServiceManager',
+                    operation: 'handleStateChange'
+                });
             }
         });
 
-        // Handle timer events
-        this.timerService.on('timerComplete', async (timerId: string) => {
+        this.timerService.addListener('timerComplete', async (timerId: string) => {
             try {
                 await this.handleTimerComplete(timerId);
             } catch (error) {
-                logger.error('Error handling timer completion:', error);
+                errorHandler.handleError(error, {
+                    component: 'ServiceManager', 
+                    operation: 'handleTimerComplete'
+                });
             }
         });
 
         // Handle hardware events
         this.hardwareService.on('hardware_error', async (error: Error) => {
-            logger.error('Hardware error detected:', error);
-            await this.handleHardwareError(error);
+            try {
+                await this.handleHardwareError(error);
+            } catch (error) {
+                errorHandler.handleError(error, {
+                    component: 'ServiceManager',
+                    operation: 'handleHardwareError'
+                });
+            }
         });
 
         // Handle intent detection results
-        this.intentHandler.on('contextUpdate', (context) => {
+        this.intentHandler.on('contextUpdate', (context: any) => {
             logger.debug('Intent context updated', { context });
         });
     }
@@ -201,7 +247,7 @@ export class ServiceManager extends EventEmitter {
     }
 
     private async verifyServicesHealth(): Promise<void> {
-        const unhealthyServices = [];
+        const unhealthyServices: Array<string> = [];
 
         for (const [name, service] of this.services) {
             if (typeof service.isHealthy === 'function' && !service.isHealthy()) {
@@ -267,7 +313,7 @@ export class ServiceManager extends EventEmitter {
         }
     }
 
-    public async handleCommand(command: string, data?: Buffer): Promise<void> {
+    public async handleCommand(command: string, data?: AudioBuffer): Promise<void> {
         if (!this.state.isInitialized) {
             throw new ServiceError('Services not initialized');
         }
@@ -284,8 +330,12 @@ export class ServiceManager extends EventEmitter {
                 return;
             }
 
-            // Execute matched intent
-            await this.executeIntent(intentMatch.intent.action, intentMatch.parameters);
+            // Execute matched intent with required parameters
+            if (intentMatch.parameters) {
+                await this.executeIntent(intentMatch.intent.action, intentMatch.parameters);
+            } else {
+                throw new ServiceError('Missing required parameters for intent');
+            }
 
         } catch (error) {
             logger.error('Error handling command:', error);
@@ -369,5 +419,54 @@ export class ServiceManager extends EventEmitter {
             logger.error('Error during service shutdown:', error);
             throw error;
         }
+    }
+
+    private async executeIntent(action: string, parameters: Record<string, any>): Promise<void> {
+        try {
+            // Execute the intent action with parameters
+            switch (action) {
+                case 'music.play':
+                    await this.musicService.play(parameters.track);
+                    break;
+                case 'home.control':
+                    await this.homeAssistant.controlDevice(parameters.device, parameters.command);
+                    break;
+                case 'timer.set':
+                    await this.timerService.createTimer(parameters.duration);
+                    break;
+                default:
+                    throw new ServiceError(`Unknown intent action: ${action}`);
+            }
+        } catch (error) {
+            logger.error('Error executing intent:', error);
+            throw error;
+        }
+    }
+
+    emit<K extends keyof ServiceManagerEvents>(
+        event: K, 
+        ...args: Parameters<ServiceManagerEvents[K]>
+    ): boolean {
+        return super.emit(event, ...args);
+    }
+
+    on<K extends keyof ServiceManagerEvents>(
+        event: K, 
+        listener: ServiceManagerEvents[K]
+    ): this {
+        return super.on(event, listener);
+    }
+
+    private async handleError(error: Error, context: string): Promise<void> {
+        logger.error(`Service error in ${context}:`, error);
+        this.emit('error', error);
+    }
+
+    private async validateConfig(): Promise<void> {
+        if (!this.config) {
+            logger.error('No configuration provided');
+            throw new ConfigurationError('No configuration provided');
+        }
+        // ... rest of validation
     }
 }

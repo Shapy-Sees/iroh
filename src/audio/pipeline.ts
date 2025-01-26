@@ -30,6 +30,14 @@ interface PipelineStatus extends ServiceStatus {
     lastProcessingTime: number;
 }
 
+export interface AudioPipeline {
+    // ... existing code ...
+}
+
+interface AudioPipelineConfig {
+    // ... existing code ...
+}
+
 export class AudioPipeline extends EventEmitter {
     private dtmfDetector: DTMFDetector;
     private voiceDetector: VoiceDetector;
@@ -253,5 +261,19 @@ export class AudioPipeline extends EventEmitter {
             logger.error('Error during audio pipeline shutdown:', error);
             throw error;
         }
+    }
+
+    private async handleError(error: Error): Promise<void> {
+        logger.error('Audio pipeline error:', error);
+        this.status.metrics.errors++;
+        this.emit('error', error);
+    }
+
+    private logProcessingMetrics(duration: number): void {
+        logger.debug('Audio processing metrics', {
+            duration,
+            processedFrames: this.status.processedFrames,
+            droppedFrames: this.status.droppedFrames
+        });
     }
 }

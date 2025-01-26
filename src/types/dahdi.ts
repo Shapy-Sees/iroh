@@ -4,6 +4,7 @@
 // Contains all the core types needed for DAHDI hardware interaction
 
 import { Buffer } from 'buffer';
+import { HardwareError } from './core';
 
 // Core DAHDI configuration interface
 export interface DAHDIConfig {
@@ -124,18 +125,12 @@ export enum DAHDIIOCtl {
     EC_DISABLE = 0x40045708
 }
 
-// Error types
-export class DAHDIError extends Error {
-    constructor(message: string, public originalError?: Error) {
-        super(message);
-        this.name = 'DAHDIError';
-    }
-}
-
-export class AudioFormatError extends DAHDIError {
-    constructor(message: string, public issues: string[]) {
-        super(message);
-        this.name = 'AudioFormatError';
+/**
+ * DAHDI-specific hardware errors
+ */
+export class DAHDIError extends HardwareError {
+    constructor(message: string, details?: Record<string, any>) {
+        super(message, { ...details, source: 'DAHDI' });
     }
 }
 

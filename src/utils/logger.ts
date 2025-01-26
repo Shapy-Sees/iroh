@@ -91,6 +91,30 @@ export class Logger {
     public setLevel(level: LogLevel): void {
         this.logger.level = level;
     }
+
+    /**
+     * Print to console with proper formatting
+     * Use this instead of console.log for debug output
+     */
+    public print(message: string): void {
+        if (process.env.NODE_ENV === 'development') {
+            console.log(message);
+        } else {
+            this.info(message);
+        }
+    }
+
+    /**
+     * Print to console with proper formatting and preserve newlines
+     * Use this for multi-line debug output
+     */
+    public printFormatted(message: string): void {
+        if (process.env.NODE_ENV === 'development') {
+            console.log(message.split('\n').join('\n'));
+        } else {
+            message.split('\n').forEach(line => this.info(line));
+        }
+    }
 }
 
 // Export singleton instance

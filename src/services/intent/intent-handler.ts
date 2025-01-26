@@ -8,7 +8,7 @@
 // - Context awareness
 // - Extensible intent definitions
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 import { logger } from '../../utils/logger';
 
 // Define core intent types
@@ -58,6 +58,11 @@ interface IntentContext {
     previousIntent?: IntentType;
     timestamp: number;
     parameters?: Record<string, any>;
+}
+
+// Add interface for IntentHandler events
+interface IntentHandlerEvents {
+    'contextUpdate': (context: IntentContext | null) => void;
 }
 
 export class IntentHandler extends EventEmitter {
@@ -276,4 +281,47 @@ export class IntentHandler extends EventEmitter {
         this.intents.delete(action);
         logger.info('Intent removed', { action });
     }
+
+    // Add proper return type overrides for emit and on
+    emit<K extends keyof IntentHandlerEvents>(
+        event: K,
+        ...args: Parameters<IntentHandlerEvents[K]>
+    ): boolean {
+        return super.emit(event, ...args);
+    }
+
+    on<K extends keyof IntentHandlerEvents>(
+        event: K,
+        listener: IntentHandlerEvents[K]
+    ): this {
+        return super.on(event, listener);
+    }
+
+    private logIntentMatch(match: IntentMatch): void {
+        logger.debug('Intent matched', {
+            type: match.intent.type,
+            action: match.intent.action,
+            score: match.score,
+            parameters: match.parameters
+        });
+    }
+
+    private logNoMatch(input: string): void {
+        logger.debug('No intent match found', { input });
+    }
+}
+
+export interface Intent {
+    type: IntentType;
+    action: IntentAction;
+    keywords: string[];
+    patterns: RegExp[];
+    contextKeywords?: string[];
+    priority?: number;
+    requiresContext?: boolean;
+}
+
+export interface IntentHandler {
+    handleIntent(intent: Intent): Promise<void>;
+    // ... rest of interface
 }

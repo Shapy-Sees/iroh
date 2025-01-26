@@ -13,6 +13,15 @@ import { IrohApp } from '../app';
 import { logger } from '../utils/logger';
 import { PhoneController } from '../controllers/phone-controller';
 import { ServiceManager } from '../services/service-manager';
+import { ServiceError } from '../types/core';
+
+// Define event types for DebugConsole
+interface DebugConsoleEvents {
+    'off-hook': void;
+    'on-hook': void;
+    'dtmf': { digit: string; duration: number };
+    'voice': [Buffer, string];
+}
 
 interface DebugCommand {
     command: string;
@@ -47,6 +56,22 @@ export class DebugConsole extends EventEmitter {
         
         // Enable debug logging
         logger.level = 'debug';
+    }
+
+    // Add proper emit override
+    emit<K extends keyof DebugConsoleEvents>(
+        event: K,
+        ...args: DebugConsoleEvents[K] extends void ? [] : [DebugConsoleEvents[K]]
+    ): boolean {
+        return super.emit(event, ...args);
+    }
+
+    // Add proper on override
+    on<K extends keyof DebugConsoleEvents>(
+        event: K,
+        listener: (arg: DebugConsoleEvents[K]) => void
+    ): this {
+        return super.on(event, listener);
     }
 
     private initializeCommands(): Map<string, DebugCommand> {
@@ -350,37 +375,33 @@ export class DebugConsole extends EventEmitter {
         }
     }
 
-    private async showHelp(): Promise<void> {
-        console.log('\nAvailable Commands:');
-        console.log('------------------');
+    private showHelp(): void {
+        logger.info('\nAvailable Commands:');
         
         // Group commands by category
         const categories = new Map<string, DebugCommand[]>();
-        
         for (const cmd of this.commands.values()) {
-            const category = cmd.command.split(' ')[0].includes('-') ? 
-                cmd.command.split('-')[0] : 'general';
-                
+            const category = cmd.command.split('.')[0] || 'general';
             if (!categories.has(category)) {
                 categories.set(category, []);
             }
-            categories.get(category)?.push(cmd);
+            categories.get(category)!.push(cmd);
         }
         
         // Print commands by category
         for (const [category, commands] of categories) {
-            console.log(`\n${category.toUpperCase()}:`);
+            logger.info(`\n${category.toUpperCase()}:`);
             for (const cmd of commands) {
-                console.log(`  ${cmd.command.padEnd(20)} - ${cmd.description}`);
+                logger.info(`  ${cmd.command.padEnd(20)} - ${cmd.description}`);
             }
         }
-        console.log();
+        logger.info('');
     }
 
     public async start(): Promise<void> {
         this.isRunning = true;
-        console.log('\nIroh Debug Console');
-        console.log('Type "help" for available commands\n');
+        logger.info('\nIroh Debug Console');
+        logger.info('Type "help" for available commands\n');
         this.rl.prompt();
     }
 
@@ -389,6 +410,21 @@ export class DebugConsole extends EventEmitter {
         await this.stopMonitoring();
         this.rl.close();
         await this.app.shutdown();
+    }
+
+    private async runAudioTests(): Promise<void> {
+        // Implementation
+        logger.debug('Running audio tests');
+    }
+
+    private async runDTMFTests(): Promise<void> {
+        // Implementation
+        logger.debug('Running DTMF tests');
+    }
+
+    private async runHATests(): Promise<void> {
+        // Implementation
+        logger.debug('Running HA tests');
     }
 }
 

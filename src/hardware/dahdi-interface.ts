@@ -252,10 +252,8 @@ export class DAHDIInterface extends EventEmitter {
         logger.debug('Stopping tone');
         // ... implementation
       }
-    }
-    /**
-     * Handles audio playback with format conversion
-     */
+    
+     // Handles audio playback with format conversion 
     public async playAudio(buffer: Buffer, format?: Partial<DAHDIAudioFormat>): Promise<void> {
         try {
             // Convert audio if needed

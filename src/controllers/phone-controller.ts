@@ -16,6 +16,9 @@ import { AudioPipeline } from '../audio/pipeline';
 import { PhoneFeedbackHandler } from './phone-feedback-handler';
 import { logger } from '../utils/logger';
 import { ErrorHandler } from '../utils/error-handler';
+import { ServiceError } from '../types/core';
+import { DAHDIError } from '../types/dahdi';
+import { AudioError } from '../types/audio';
 
 import {
     AudioInput,

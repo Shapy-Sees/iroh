@@ -12,6 +12,8 @@ import {
     DAHDIChannelConfig, 
     DAHDIAudioFormat 
 } from '../types/dahdi';
+import { ConfigurationError } from '../types/core';
+import { DAHDIError } from '../types/dahdi';
 
 // Load environment variables
 dotenvConfig();

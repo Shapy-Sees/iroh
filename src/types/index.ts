@@ -370,3 +370,11 @@ export interface CacheEvents {
     'evict': { key: string };
     'expire': { key: string };
 }
+
+// Re-export all types
+export * from './core';
+export * from './audio';
+export * from './dahdi';
+export * from './services/home';
+export * from './services/ai';
+export * from './services/music';
