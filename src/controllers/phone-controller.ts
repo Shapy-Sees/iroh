@@ -9,6 +9,19 @@
 // - Hardware monitoring and error recovery
 
 import { EventEmitter } from 'events';
+// Add interface definitions at the top
+interface DiagnosticResult {
+    test: string;
+    passed: boolean;
+    message?: string;
+}
+
+interface ToneOptions {
+    frequency: number;
+    duration: number;
+    level: number;
+}
+
 import { DAHDIInterface } from '../hardware/dahdi-interface';
 import { DTMFDetector } from '../audio/dtmf-detector';
 import { VoiceDetector } from '../audio/voice-detector';
@@ -16,9 +29,8 @@ import { AudioPipeline } from '../audio/pipeline';
 import { PhoneFeedbackHandler } from './phone-feedback-handler';
 import { logger } from '../utils/logger';
 import { ErrorHandler } from '../utils/error-handler';
-import { ServiceError } from '../types/core';
-import { DAHDIError } from '../types/dahdi';
-import { AudioError } from '../types/audio';
+import { DAHDIError } from '../types/hardware/dahdi';
+import { AudioError } from '../types/hardware/audio';
 
 import {
     AudioInput,
@@ -28,7 +40,7 @@ import {
     DAHDIAudioFormat,
     Result,
     HardwareError
-} from '../types';
+} from '../types/hardware/dahdi';
 
 // Phone states based on DAHDI hardware states
 enum PhoneState {
@@ -39,7 +51,17 @@ enum PhoneState {
     ERROR = 'error'
 }
 
+// Update class to extend correctly typed EventEmitter
 export class PhoneController extends EventEmitter {
+    // Add type declarations for events
+    declare emit: {
+        (event: 'stateChange', payload: { oldState: PhoneState; newState: PhoneState }): boolean;
+        (event: 'off_hook'): boolean;
+        (event: 'on_hook'): boolean;
+        (event: 'dtmf', event: DTMFEvent): boolean;
+        (event: 'voice', event: VoiceEvent): boolean;
+    };
+
     private dahdi: DAHDIInterface;
     private dtmfDetector: DTMFDetector;
     private voiceDetector: VoiceDetector;
@@ -637,15 +659,11 @@ export class PhoneController extends EventEmitter {
         }
     }
 
-    public async runDiagnostics(): Promise<Array<{
-        test: string;
-        passed: boolean;
-        message?: string;
-    }>> {
+    public async runDiagnostics(): Promise<DiagnosticResult[]> {
         logger.info('Running phone diagnostics');
 
         try {
-            const results = [];
+            const results: DiagnosticResult[] = [];
 
             // Test DAHDI status
             results.push({
@@ -674,11 +692,7 @@ export class PhoneController extends EventEmitter {
         }
     }
 
-    private async testAudioPath(): Promise<{
-        test: string;
-        passed: boolean;
-        message: string;
-    }> {
+    private async testAudioPath(): Promise<DiagnosticResult> {
         try {
             // Generate and play test tone
             await this.playTone('test');

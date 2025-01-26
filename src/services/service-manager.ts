@@ -19,11 +19,13 @@ import { HardwareService } from './hardware/hardware-service';
 import { IntentHandler } from './intent/intent-handler';
 import { Config, ServiceError } from '../types/core';
 import type { ServiceStatus } from '../types/service';
-import type { AudioBuffer } from '../types/audio';
+import type { AudioBuffer } from '../types/hardware/audio';
 import type { HAEvent } from '../types/service/home';
 import { logger } from '../utils/logger';
 import { PhoneController } from '../controllers/phone-controller';
 import { errorHandler } from '../utils/error-handler';
+import { Config, AIConfig, HAConfig } from '../types';
+import { DAHDIConfig } from '../types/hardware/dahdi';
 
 interface ServiceState {
     isInitialized: boolean;
@@ -85,14 +87,14 @@ export class ServiceManager extends EventEmitter {
 
     private createServiceInstances(): void {
         // Create core services in dependency order
-        const dahdiConfig = {
-            devicePath: this.config.hardware.devicePath,
-            controlPath: this.config.hardware.controlPath,
+        const dahdiConfig: DAHDIConfig = {
+            devicePath: this.config.hardware.dahdi.devicePath,
+            controlPath: this.config.hardware.dahdi.controlPath,
             sampleRate: 8000,
             channels: 1,
             bitDepth: 16,
-            bufferSize: this.config.hardware.bufferSize,
-            impedance: this.config.hardware.impedance
+            bufferSize: this.config.audio.bufferSize,
+            channel: this.config.hardware.dahdi.channel // Add required channel property
         };
         
         this.hardwareService = new HardwareService(dahdiConfig);

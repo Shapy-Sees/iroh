@@ -1,5 +1,5 @@
 import { Buffer } from 'buffer';
-import { HardwareError } from './core';
+import { HardwareError } from '../core';
 
 export interface AudioConfig {
     sampleRate: 8000;

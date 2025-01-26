@@ -4,7 +4,7 @@
 // Initializes and coordinates all core services including the hardware interface,
 // phone controller, and service manager. Handles startup, shutdown, and error recovery.
 
-import { PhoneController } from './controllers/phone-controller';
+import { PhoneController, PhoneControllerConfig } from './controllers/phone-controller';
 import { ServiceManager } from './services/service-manager';
 import { TimerService } from './services/timer/timer-service';
 import { HardwareService } from './services/hardware/hardware-service';
@@ -88,7 +88,7 @@ export class IrohApp {
         };
     }
 
-    private initializeServices(phoneConfig: PhoneControllerConfig, serviceConfig: Config): void {
+    private initializeServices(phoneConfig: FXSConfig, serviceConfig: Config): void {
         // Initialize hardware service
         this.hardwareService = new HardwareService(phoneConfig.fxs);
 

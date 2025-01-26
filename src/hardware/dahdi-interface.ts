@@ -20,8 +20,10 @@ import {
     AudioInput,
     DAHDIIOCtl,
     DAHDIBufferInfo,
-    DAHDIChannelStatus
-} from '../types/dahdi';
+    DAHDIChannelStatus,
+    AudioConverterOptions,
+    DAHDIFormatError
+} from '../types/hardware/dahdi';
 
 
 
@@ -52,10 +54,14 @@ export class DAHDIInterface extends EventEmitter {
             ...config
         };
 
-        // Initialize audio converter
+        // Initialize converter with proper options
         this.audioConverter = new DAHDIAudioConverter({
-            quality: process.env.NODE_ENV === 'production' ? 'best' : 'medium',
-            bufferSize: config.bufferSize || 2048
+            bufferSize: config.bufferSize || 2048,
+            format: {
+                sampleRate: 8000,
+                channels: 1,
+                bitDepth: 16
+            }
         });
 
         // Initialize audio buffer for sample data

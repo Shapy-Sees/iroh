@@ -231,6 +231,16 @@ export class HardwareService extends EventEmitter {
                 if (channelStatus.levels) {
                     this.status.systemHealth.voltages.fxs = 48; // Nominal FXS voltage
                 }
+
+                // Validate DAHDI audio format
+                const formatValid = this.validateDAHDIFormat();
+                if (!formatValid) {
+                    throw new AudioFormatError('Invalid DAHDI format configuration', [
+                        'Must be 8kHz sample rate',
+                        'Must be mono channel',
+                        'Must be 16-bit PCM'
+                    ]);
+                }
             }
 
             // Check for errors
@@ -250,11 +260,17 @@ export class HardwareService extends EventEmitter {
                                   this.status.dahdiStatus.isOpen;
 
         } catch (error) {
-            logger.error('Health check failed:', error);
+            logger.error('Health check error:', error);
             this.status.systemHealth.errors++;
-            this.status.metrics.errors++;
             this.emit('health_error', error);
         }
+    }
+
+    private validateDAHDIFormat(): boolean {
+        const config = this.dahdi.getConfig();
+        return config.sampleRate === 8000 &&
+               config.channels === 1 &&
+               config.bitDepth === 16;
     }
 
     private startHealthMonitoring(): void {

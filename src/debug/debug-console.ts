@@ -11,11 +11,11 @@ import readline from 'readline';
 import { EventEmitter } from 'events';
 import { IrohApp } from '../app';
 import { logger } from '../utils/logger';
-import { PhoneController } from '../controllers/phone-controller';
-import { ServiceManager } from '../services/service-manager';
-import { ServiceError } from '../types/core';
+import { HardwareError, ServiceError } from '../types/errors';
+import { AudioBuffer, DAHDIStatus } from '../types/hardware';
 
-// Define event types for DebugConsole
+type MonitorType = 'audio' | 'hardware' | 'events';
+
 interface DebugConsoleEvents {
     'off-hook': void;
     'on-hook': void;
@@ -30,19 +30,18 @@ interface DebugCommand {
 }
 
 export class DebugConsole extends EventEmitter {
-    private rl: readline.Interface;
-    private app: IrohApp;
-    private commands: Map<string, DebugCommand>;
-    private isRunning: boolean = false;
+    private readonly rl: readline.Interface;
+    private readonly app: IrohApp;
+    private readonly commands: Map<string, DebugCommand>;
+    private isRunning = false;
     private lastCommand: string | null = null;
-    private audioMonitoring: boolean = false;
-    private hardwareMonitoring: boolean = false;
+    private audioMonitoring = false;
+    private hardwareMonitoring = false;
 
     constructor(app: IrohApp) {
         super();
         this.app = app;
         
-        // Initialize readline interface with command history
         this.rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout,
@@ -54,20 +53,17 @@ export class DebugConsole extends EventEmitter {
         this.commands = this.initializeCommands();
         this.setupHandlers();
         
-        // Enable debug logging
         logger.level = 'debug';
     }
 
-    // Add proper emit override
-    emit<K extends keyof DebugConsoleEvents>(
+    public override emit<K extends keyof DebugConsoleEvents>(
         event: K,
         ...args: DebugConsoleEvents[K] extends void ? [] : [DebugConsoleEvents[K]]
     ): boolean {
         return super.emit(event, ...args);
     }
 
-    // Add proper on override
-    on<K extends keyof DebugConsoleEvents>(
+    public override on<K extends keyof DebugConsoleEvents>(
         event: K,
         listener: (arg: DebugConsoleEvents[K]) => void
     ): this {
@@ -150,7 +146,7 @@ export class DebugConsole extends EventEmitter {
             command: 'monitor <type>',
             description: 'Start monitoring (audio|hardware|events)',
             handler: async (type: string) => {
-                await this.startMonitoring(type);
+                await this.startMonitoring(type as MonitorType);
             }
         });
 
@@ -200,8 +196,7 @@ export class DebugConsole extends EventEmitter {
     }
 
     private setupHandlers(): void {
-        // Handle command input
-        this.rl.on('line', async (line) => {
+        this.rl.on('line', async (line: string) => {
             if (!this.isRunning) return;
 
             const [command, ...args] = line.trim().split(' ');
@@ -212,8 +207,8 @@ export class DebugConsole extends EventEmitter {
                     this.lastCommand = command;
                     await cmd.handler(...args);
                 } catch (error) {
-                    logger.error('Error executing debug command:', error);
-                    console.error('Error:', error instanceof Error ? error.message : error);
+                    logger.error('Command execution error:', { error, command });
+                    console.error('Error:', error instanceof Error ? error.message : String(error));
                 }
             } else if (command !== '') {
                 console.log('Unknown command. Type "help" for available commands.');
@@ -222,69 +217,56 @@ export class DebugConsole extends EventEmitter {
             this.rl.prompt();
         });
 
-        // Handle cleanup
         this.rl.on('close', () => {
-            this.stop();
+            void this.stop();
         });
 
-        // Monitor system events when enabled
-        this.app.on('error', (error) => {
+        this.app.on('error', (error: Error) => {
             if (this.hardwareMonitoring) {
-                logger.error('System error detected:', error);
+                logger.error('System error:', { error });
             }
         });
     }
 
     private async testHardware(port: number): Promise<void> {
-        console.log(`Testing FXS port ${port}...`);
+        const phone = this.app.getPhoneController();
+        logger.debug('Testing hardware', { port });
         
         try {
-            const phone = this.app.getPhoneController();
+            await Promise.all([
+                this.testLineVoltage(port),
+                this.testRingGeneration(port),
+                this.testAudioPath(port),
+                this.testDTMF(port)
+            ]);
             
-            // Test line voltage
-            console.log('Testing line voltage...');
-            // Implementation would check voltage through DAHDI
-            
-            // Test ring generation
-            console.log('Testing ring generation...');
-            await phone.playTone('busy');
-            
-            // Test audio path
-            console.log('Testing audio path...');
-            const testTone = this.generateTestTone();
-            await phone.playAudio(testTone);
-            
-            // Test DTMF detection
-            console.log('Testing DTMF detection...');
-            // Implementation would verify DTMF detection
-            
-            console.log('Hardware test complete');
+            logger.info('Hardware test complete', { port });
         } catch (error) {
-            console.error('Hardware test failed:', error);
+            const message = error instanceof Error ? error.message : String(error);
+            logger.error('Hardware test failed', { port, error });
+            throw new HardwareError(`Hardware test failed on port ${port}: ${message}`);
         }
     }
 
-    private async startMonitoring(type: string): Promise<void> {
-        switch (type.toLowerCase()) {
+    private async startMonitoring(type: MonitorType): Promise<void> {
+        switch (type) {
             case 'audio':
                 this.audioMonitoring = true;
-                console.log('Audio monitoring started. Press Ctrl+C to stop.');
-                // Implementation would show audio levels
+                logger.info('Audio monitoring started');
                 break;
                 
             case 'hardware':
                 this.hardwareMonitoring = true;
-                console.log('Hardware monitoring started. Press Ctrl+C to stop.');
-                // Implementation would monitor hardware status
+                logger.info('Hardware monitoring started');
                 break;
                 
             case 'events':
-                console.log('Event monitoring started. Press Ctrl+C to stop.');
-                // Implementation would show system events
+                logger.info('Event monitoring started');
                 break;
                 
             default:
-                console.log('Unknown monitoring type. Use: audio|hardware|events');
+                const exhaustiveCheck: never = type;
+                throw new Error(`Unhandled monitoring type: ${exhaustiveCheck}`);
         }
     }
 
@@ -295,83 +277,96 @@ export class DebugConsole extends EventEmitter {
     }
 
     private async checkHAStatus(entity?: string): Promise<void> {
+        const services = this.app.getServiceManager();
+        
         try {
-            const services = this.app['serviceManager'];
             if (entity) {
                 const status = await services.getHAEntityStatus(entity);
-                console.log(`Status for ${entity}:`, status);
+                logger.info('Entity status', { entity, status });
             } else {
                 const status = await services.getHAStatus();
-                console.log('Home Assistant Status:', status);
+                logger.info('Home Assistant status', { status });
             }
         } catch (error) {
-            console.error('Error checking HA status:', error);
+            logger.error('Error checking HA status', { error, entity });
+            throw new ServiceError(`Failed to get HA status: ${String(error)}`);
         }
     }
 
-    private async callHAService(service: string, data?: any): Promise<void> {
+    private async callHAService(service: string, data?: unknown): Promise<void> {
+        const services = this.app.getServiceManager();
+        
         try {
-            const services = this.app['serviceManager'];
             await services.callHAService(service, data);
-            console.log('Service call completed successfully');
+            logger.info('Service call complete', { service });
         } catch (error) {
-            console.error('Error calling HA service:', error);
+            logger.error('Service call failed', { service, error });
+            throw new ServiceError(`Failed to call service ${service}: ${String(error)}`);
         }
     }
 
     private async showDetailedStatus(): Promise<void> {
         try {
             const phone = this.app.getPhoneController();
-            const services = this.app['serviceManager'];
+            const services = this.app.getServiceManager();
             
-            console.log('\nSystem Status:');
-            console.log('-------------');
-            console.log(`Phone State: ${phone.isOpen() ? 'Active' : 'Inactive'}`);
-            console.log(`Last Command: ${this.lastCommand || 'None'}`);
-            console.log(`Audio Monitoring: ${this.audioMonitoring ? 'On' : 'Off'}`);
-            console.log(`Hardware Monitoring: ${this.hardwareMonitoring ? 'On' : 'Off'}`);
+            const status = {
+                phone: {
+                    state: phone.isOpen() ? 'Active' : 'Inactive',
+                    lastCommand: this.lastCommand,
+                    monitoring: {
+                        audio: this.audioMonitoring,
+                        hardware: this.hardwareMonitoring
+                    }
+                },
+                services: await services.getStatus()
+            };
             
-            // Add more status information as needed
+            logger.info('System status', status);
             
         } catch (error) {
-            console.error('Error showing status:', error);
+            logger.error('Error showing status', { error });
+            throw new Error(`Failed to get system status: ${String(error)}`);
         }
     }
 
     private generateTestTone(): Buffer {
-        // Generate a simple sine wave for testing
         const sampleRate = 8000;
-        const duration = 1; // seconds
-        const frequency = 440; // Hz
+        const duration = 1;
+        const frequency = 440;
         const samples = sampleRate * duration;
         const buffer = Buffer.alloc(samples * 2);
         
-        for (let i = 0; i < samples; i++) {
-            const value = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0x7FFF;
-            buffer.writeInt16LE(Math.floor(value), i * 2);
+        try {
+            for (let i = 0; i < samples; i++) {
+                const value = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0x7FFF;
+                buffer.writeInt16LE(Math.floor(value), i * 2);
+            }
+            return buffer;
+        } catch (error) {
+            logger.error('Error generating test tone', { error });
+            throw new Error(`Failed to generate test tone: ${String(error)}`);
         }
-        
-        return buffer;
     }
 
     private async runTests(component: string): Promise<void> {
-        console.log(`Running tests for ${component}...`);
+        logger.debug('Starting test suite', { component });
+        
         try {
             switch (component.toLowerCase()) {
                 case 'audio':
-                    await this.runAudioTests();
-                    break;
                 case 'dtmf':
-                    await this.runDTMFTests();
-                    break;
                 case 'ha':
-                    await this.runHATests();
+                    await this[`run${component.toUpperCase()}Tests`]();
                     break;
                 default:
-                    console.log('Unknown test component');
+                    throw new Error(`Unknown test component: ${component}`);
             }
+            
+            logger.info('Test suite complete', { component });
         } catch (error) {
-            console.error('Test execution failed:', error);
+            logger.error('Test execution failed', { component, error });
+            throw new Error(`Test suite failed: ${String(error)}`);
         }
     }
 

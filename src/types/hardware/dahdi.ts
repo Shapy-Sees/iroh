@@ -4,7 +4,7 @@
 // Contains all the core types needed for DAHDI hardware interaction
 
 import { Buffer } from 'buffer';
-import { HardwareError } from './core';
+import { HardwareError } from '../core';
 
 // Core DAHDI configuration interface
 export interface DAHDIConfig {
@@ -151,4 +151,18 @@ export interface AudioInput {
     channels: number;
     bitDepth: number;
     data: Buffer;
+}
+
+// Add AudioConverterOptions
+export interface AudioConverterOptions {
+    bufferSize?: number;
+    format?: Partial<DAHDIAudioFormat>;
+}
+
+// Add error class
+export class DAHDIFormatError extends HardwareError {
+    constructor(message: string, public details: string[]) {
+        super(message);
+        this.name = 'DAHDIFormatError';
+    }
 }

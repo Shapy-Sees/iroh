@@ -13,9 +13,9 @@ import {
     DAHDIAudioFormat, 
     AudioFormatError,
     AudioInput 
-} from '../types/dahdi';
-import { AudioError } from '../types/audio';
-import { DAHDIError } from '../types/dahdi';
+} from '../types/hardware/dahdi';
+import { AudioError } from '../types/hardware/audio';
+import { DAHDIError } from '../types/hardware/dahdi';
 
 interface AudioConverterOptions {
     /** Buffer size for processing */
@@ -24,183 +24,79 @@ interface AudioConverterOptions {
     useWorkers?: boolean;
 }
 
-export class DAHDIAudioConverter extends EventEmitter {
-    private readonly options: Required<AudioConverterOptions>;
-    private isProcessing: boolean = false;
+import { AudioError, AudioFormatError } from '../types/hardware/audio';
+import { DAHDIAudioFormat } from '../types/hardware/dahdi';
+import { logger } from '../utils/logger';
 
-    constructor(options?: AudioConverterOptions) {
-        super();
-        this.options = {
+interface ConverterConfig {
+    quality: 'best' | 'medium' | 'fast';
+    bufferSize?: number;
+}
+
+export class DAHDIAudioConverter {
+    private readonly config: Required<ConverterConfig>;
+    private readonly dahdiFormat: DAHDIAudioFormat = {
+        sampleRate: 8000,
+        channels: 1,
+        bitDepth: 16,
+        format: 'linear'
+    };
+
+    constructor(config: Partial<ConverterConfig> = {}) {
+        this.config = {
+            quality: 'best',
             bufferSize: 2048,
-            useWorkers: false,
-            ...options
+            ...config
         };
-        
-        logger.debug('Initializing DAHDI audio converter', { options: this.options });
     }
 
-    /**
-     * Converts audio buffer to DAHDI format (8kHz/16-bit/mono)
-     */
-    public async convertToDAHDI(
-        buffer: Buffer,
-        sourceFormat: Partial<DAHDIAudioFormat>
-    ): Promise<Buffer> {
+    public async convertToDAHDI(buffer: Buffer, sourceFormat?: Partial<DAHDIAudioFormat>): Promise<Buffer> {
         try {
-            if (this.isProcessing) {
-                throw new AudioFormatError('Converter busy', ['Resource busy']);
-            }
-            
-            this.isProcessing = true;
-            logger.debug('Starting audio conversion to DAHDI format', {
-                sourceFormat,
-                bufferSize: buffer.length
-            });
-
-            // Convert input buffer to AudioBuffer for processing
-            let audioBuffer = await this.bufferToAudioBuffer(buffer, sourceFormat);
-
-            // Resample if needed
-            if (sourceFormat.sampleRate !== 8000) {
-                audioBuffer = await this.resampleAudioBuffer(audioBuffer, 8000);
+            // Validate source format
+            if (!this.isCompatibleFormat(sourceFormat)) {
+                throw new AudioFormatError('Incompatible audio format for DAHDI', [
+                    'Must be 8kHz sample rate',
+                    'Must be mono channel',
+                    'Must be 16-bit PCM'
+                ]);
             }
 
-            // Convert to mono if needed
-            if (audioBuffer.numberOfChannels > 1) {
-                audioBuffer = this.convertToMono(audioBuffer);
+            // If already in DAHDI format, return as-is
+            if (this.isDAHDIFormat(sourceFormat)) {
+                return buffer;
             }
 
-            // Convert to 16-bit PCM buffer
-            const output = await this.audioBufferToInt16Buffer(audioBuffer);
-
-            logger.debug('Audio conversion completed', {
-                inputSize: buffer.length,
-                outputSize: output.length,
-                sampleRate: audioBuffer.sampleRate,
-                channels: audioBuffer.numberOfChannels
-            });
-
-            return output;
-
+            // Perform conversion
+            return await this.convert(buffer, sourceFormat);
         } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error('Audio conversion failed:', err);
-            throw new AudioFormatError('Audio conversion failed', [err.message]);
-        } finally {
-            this.isProcessing = false;
+            logger.error('Audio conversion error:', error);
+            throw error instanceof Error ? error : new AudioError('Conversion failed');
         }
     }
 
-    /**
-     * Converts Buffer to AudioBuffer for processing
-     */
-    private async bufferToAudioBuffer(
-        buffer: Buffer,
-        format: Partial<DAHDIAudioFormat>
-    ): Promise<AudioBuffer> {
-        const channels = format.channels || 1;
-        const sampleRate = format.sampleRate || 8000;
-        const samplesPerChannel = buffer.length / (channels * (format.bitDepth || 16) / 8);
+    private isCompatibleFormat(format?: Partial<DAHDIAudioFormat>): boolean {
+        if (!format) return false;
+        return format.sampleRate === 8000 &&
+               format.channels === 1 &&
+               format.bitDepth === 16;
+    }
 
-        const audioBuffer = new AudioBuffer({
-            length: samplesPerChannel,
-            numberOfChannels: channels,
-            sampleRate: sampleRate
+    private isDAHDIFormat(format?: Partial<DAHDIAudioFormat>): boolean {
+        return this.isCompatibleFormat(format) &&
+               format?.format === 'linear';
+    }
+
+    private async convert(buffer: Buffer, sourceFormat?: Partial<DAHDIAudioFormat>): Promise<Buffer> {
+        // Implementation would use a native audio processing library
+        // This is a placeholder that returns the original buffer
+        logger.debug('Converting audio to DAHDI format', {
+            sourceFormat,
+            targetFormat: this.dahdiFormat
         });
-
-        // Convert buffer data to float32 samples
-        for (let channel = 0; channel < channels; channel++) {
-            const channelData = new Float32Array(samplesPerChannel);
-            for (let i = 0; i < samplesPerChannel; i++) {
-                const offset = (i * channels + channel) * 2;
-                channelData[i] = buffer.readInt16LE(offset) / 32768.0;
-            }
-            audioBuffer.copyToChannel(channelData, channel);
-        }
-
-        return audioBuffer;
-    }
-
-    /**
-     * Resamples AudioBuffer to target sample rate using linear interpolation
-     */
-    private async resampleAudioBuffer(
-        buffer: AudioBuffer,
-        targetRate: number
-    ): Promise<AudioBuffer> {
-        const ratio = buffer.sampleRate / targetRate;
-        const newLength = Math.floor(buffer.length / ratio);
-        
-        const resampled = new AudioBuffer({
-            length: newLength,
-            numberOfChannels: buffer.numberOfChannels,
-            sampleRate: targetRate
-        });
-
-        // Resample each channel
-        for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-            const input = buffer.getChannelData(channel);
-            const output = new Float32Array(newLength);
-
-            for (let i = 0; i < newLength; i++) {
-                const position = i * ratio;
-                const index = Math.floor(position);
-                const fraction = position - index;
-
-                // Linear interpolation
-                const current = input[index] || 0;
-                const next = input[index + 1] || current;
-                output[i] = current + fraction * (next - current);
-            }
-
-            resampled.copyToChannel(output, channel);
-        }
-
-        return resampled;
-    }
-
-    /**
-     * Converts multi-channel AudioBuffer to mono
-     */
-    private convertToMono(buffer: AudioBuffer): AudioBuffer {
-        const mono = new AudioBuffer({
-            length: buffer.length,
-            numberOfChannels: 1,
-            sampleRate: buffer.sampleRate
-        });
-
-        // Mix all channels to mono
-        const monoData = new Float32Array(buffer.length);
-        for (let i = 0; i < buffer.numberOfChannels; i++) {
-            const channelData = buffer.getChannelData(i);
-            for (let j = 0; j < buffer.length; j++) {
-                monoData[j] += channelData[j] / buffer.numberOfChannels;
-            }
-        }
-
-        mono.copyToChannel(monoData, 0);
-        return mono;
-    }
-
-    /**
-     * Converts AudioBuffer to 16-bit PCM Buffer
-     */
-    private async audioBufferToInt16Buffer(buffer: AudioBuffer): Promise<Buffer> {
-        const float32Array = buffer.getChannelData(0);
-        const output = Buffer.alloc(float32Array.length * 2);
-
-        for (let i = 0; i < float32Array.length; i++) {
-            // Clamp values to -1 to 1 range
-            const sample = Math.max(-1, Math.min(1, float32Array[i]));
-            // Convert to 16-bit integer
-            const value = Math.floor(sample < 0 ? sample * 0x8000 : sample * 0x7FFF);
-            output.writeInt16LE(value, i * 2);
-        }
-
-        return output;
+        return buffer;
     }
 
     public destroy(): void {
-        this.removeAllListeners();
+        // Cleanup resources if needed
     }
 }

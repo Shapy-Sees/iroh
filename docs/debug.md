@@ -1,3 +1,8 @@
+# Iroh Debug Guide
+
+## Quick Start
+
+Start the application in different debug modes:
 
 # run application in dev mode
 NODE_ENV=development npm start

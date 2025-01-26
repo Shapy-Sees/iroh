@@ -1,8 +1,12 @@
 // src/controllers/phone-feedback-handler.ts
 //
-// Manages audio and voice feedback for the phone system, coordinating between
-// the DAHDI hardware interface, AI service, and tone generation.
-// Handles feedback queuing, interruption, error recovery, and DAHDI format compatibility.
+// Key Features:
+// - Combines voice and tone feedback
+// - Manages feedback timing
+// - Handles interrupt scenarios
+// - Provides audio cues
+// - Maintains conversation flow
+// - Error state recovery
 
 import { EventEmitter } from 'events';
 import { DAHDIInterface } from '../hardware/dahdi-interface';
@@ -11,6 +15,7 @@ import { ErrorMessages } from '../utils/error-messages';
 import { logger } from '../utils/logger';
 import { EVENTS, TIMEOUTS } from '../core/constants';
 import { ServiceError } from '../types/core';
+import { ErrorSeverity, ErrorContext } from '../types';
 
 interface FeedbackOptions {
     /** Whether to play audio tones */
@@ -67,7 +72,7 @@ export class PhoneFeedbackHandler extends EventEmitter {
         logger.info('Phone feedback handler initialized');
     }
 
-    public async handleError(error: Error, context: any, options: Partial<FeedbackOptions> = {}): Promise<void> {
+    public async handleError(error: Error, context: ErrorContext, options: Partial<FeedbackOptions> = {}): Promise<void> {
         const defaultOptions: FeedbackOptions = {
             playTones: true,
             useVoice: true,
@@ -107,6 +112,16 @@ export class PhoneFeedbackHandler extends EventEmitter {
             logger.error('Error providing feedback:', feedbackError);
             // Fallback to simple tone if voice feedback fails
             await this.playErrorTone('high');
+        }
+    }
+
+    public async acknowledge(command: string, result: string): Promise<void> {
+        try {
+            const message = await this.generateAcknowledgement(command, result);
+            await this.playAudio(await this.aiService.generateSpeech(message));
+        } catch (error) {
+            logger.error('Error providing acknowledgement:', error);
+            await this.playTone('success');
         }
     }
 
