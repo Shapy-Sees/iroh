@@ -4,7 +4,7 @@
 // Provides fundamental interfaces and types for services, configuration,
 // events, and common data structures.
 
-import { LogLevel } from './logging';
+import { LogLevel, LogMetadata, ErrorLogMetadata, LogComponent } from './logging';
 import { AudioFormat } from './hardware/audio';
 import { DAHDIConfig } from './hardware/dahdi';
 import { ErrorSeverity } from './errors';
@@ -131,7 +131,14 @@ export interface LogConfig {
     maxSize: string;
     console?: boolean;
     timestamps?: boolean;
+    format?: {
+        colors?: boolean;
+        json?: boolean;
+        prettyPrint?: boolean;
+    };
 }
+
+
 
 // Event types
 export interface BaseEvent {
@@ -161,13 +168,42 @@ export interface ServiceStatus {
     lastError?: Error;
     lastUpdate?: Date;
     metrics?: {
-      uptime: number;
-      errors: number;
-      warnings: number;
-      lastChecked: Date;
+        uptime: number;
+        errors: number;
+        warnings: number;
+        lastChecked: Date;
     };
-  }
-  export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
+}
+
+export interface PhoneConfig {
+    hardware: {
+        devicePath: string;
+        audioFormat: AudioFormat;
+        channel: number;
+    };
+    audio: AudioConfig;
+}
+
+export interface SuccessMessage {
+    message: string;
+    celebration?: string;
+    wisdom?: string;
+}
+
+export interface SuccessContext {
+    operation: string;
+    duration?: number;
+    achievement?: string;
+    consecutiveSuccesses?: number;
+}
+
+export interface TonePattern {
+    frequency?: number;
+    duration?: number;
+    pause?: number;
+    level?: number;
+}
+
 
 // Export all errors
 export * from './errors';
