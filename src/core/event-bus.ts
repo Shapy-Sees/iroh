@@ -63,7 +63,12 @@ export interface MusicEventPayloads {
 export type IrohEventPayloads = SystemEventPayloads & 
     PhoneEventPayloads & 
     HomeEventPayloads & 
-    MusicEventPayloads;
+    MusicEventPayloads & {
+    'service:initialized': { serviceName: string };
+    'service:error': { serviceName: string, error: Error };
+    'service:stateChanged': { serviceName: string, status: any };
+    'service:shutdown': { serviceName: string };
+};
 
 export type EventName = keyof IrohEventPayloads;
 
@@ -100,8 +105,13 @@ export class EventBus extends EventEmitter {
 
     public emit<K extends EventName>(
         event: K,
-        payload: Omit<IrohEventPayloads[K], keyof BaseEventPayload>
+        payload: IrohEventPayloads[K]
     ): boolean {
+        if (!this.validateEventPayload(event, payload)) {
+            logger.error(`Invalid payload for event ${String(event)}`);
+            return false;
+        }
+
         const fullPayload = {
             ...payload,
             timestamp: Date.now(),
@@ -123,6 +133,25 @@ export class EventBus extends EventEmitter {
         this.emitToPatternSubscribers(event, fullPayload);
 
         return result;
+    }
+
+    private validateEventPayload<K extends EventName>(
+        event: K,
+        payload: any
+    ): payload is IrohEventPayloads[K] {
+        // Add runtime payload validation
+        if (!payload || typeof payload !== 'object') return false;
+        
+        // Validate required base fields
+        if (typeof payload.timestamp !== 'number') {
+            payload.timestamp = Date.now();
+        }
+        
+        if (typeof payload.id !== 'string') {
+            payload.id = this.generateEventId();
+        }
+        
+        return true;
     }
 
     public on<K extends EventName>(

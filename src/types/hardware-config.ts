@@ -2,7 +2,7 @@
 // This file defines the configuration for the hardware interface.
 
 
-import { BaseConfig } from './core';
+import { IBaseConfig } from './core';
 import { DAHDI_CONSTANTS } from '../config/constants';
 import { AudioConfig } from './hardware/audio';
 import { DAHDIConfig } from './hardware/dahdi';
@@ -15,17 +15,18 @@ export enum HardwareState {
     OFFLINE = 'offline'
 }
 
-export interface HardwareConfig extends BaseConfig {
+export interface HardwareConfig extends IBaseConfig {
     dahdi: DAHDIConfig;
     audio: AudioConfig;
     fxs?: FXSConfig;
 }
 
-export { DAHDIConfig } from './hardware/dahdi';
-export { AudioConfig, AudioFormat } from './hardware/audio';
-export { FXSConfig } from './hardware/fxs';
+// Remove duplicate exports and use single source
+export type { AudioConfig, AudioFormat } from './hardware/audio';
+export type { DAHDIConfig } from './hardware/dahdi';
+export type { FXSConfig } from './hardware/fxs';
 
-export interface DAHDIConfig extends BaseConfig {
+export interface DAHDIConfig extends IBaseConfig {
     devicePath: string;
     controlPath: string;
     sampleRate: typeof DAHDI_CONSTANTS.SAMPLE_RATE;

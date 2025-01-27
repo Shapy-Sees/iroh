@@ -11,16 +11,14 @@ import { Buffer } from 'buffer';
 // Core types and interfaces
 export * from './core';
 
-// Error handling
-export * from './errors';
-
-// Logging system
-export * from './logging';
+// Hardware related types
+export * from './hardware';
 
 // Service related types
 export * from './services';
 
-// Hardware related types
-export * from './hardware';
+// Logging system
+export * from './logging';
 
-// Note: Remove duplicate interface definitions as they're now properly exported from core.ts
+// Error handling
+export * from './errors';

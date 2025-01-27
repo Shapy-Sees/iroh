@@ -7,6 +7,7 @@ import { Buffer } from 'buffer';
 import { AudioInput, AudioFormat } from './audio';
 import { BaseConfig } from '../core';
 import { DAHDIConfig } from '../hardware-config';
+import { IBaseConfig } from '../core';
 
 // Base hardware error class
 export class HardwareError extends Error {
@@ -129,12 +130,15 @@ export enum DAHDIIOCtl {
 // Types for events
 export interface DAHDIEvents {
     'ready': void;
-    'error': Error;
+    'error': DAHDIError;
     'audio': AudioInput;
     'hook_state': { offHook: boolean };
     'ring_start': void;
     'ring_stop': void;
     'dtmf': { digit: string; duration: number };
+    'status_change': DAHDIChannelStatus;
+    'buffer_overflow': void;
+    'buffer_underrun': void;
 }
 
 // Add AudioConverterOptions
@@ -144,7 +148,7 @@ export interface AudioConverterOptions {
 }
 
 // Add DAHDIConfig interface
-export interface DAHDIConfig extends BaseConfig {
+export interface DAHDIConfig extends IBaseConfig {
     devicePath: string;
     controlPath: string;
     sampleRate: 8000;
@@ -159,4 +163,11 @@ export interface DAHDIConfig extends BaseConfig {
             taps: number;
         };
     };
+}
+
+export interface DAHDIAudioFormat {
+    sampleRate: 8000;
+    channels: 1;
+    bitDepth: 16;
+    format: 'linear';
 }

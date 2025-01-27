@@ -5,28 +5,34 @@
 // while allowing for future development of full functionality
 
 import { EventEmitter } from 'events';
-import { MusicService as IMusicService, MusicStatus } from '../../types';
-import { Service, ServiceStatus, ServiceState } from '../../types/services';
+import { 
+    MusicService as IMusicService,
+    ServiceStatus,
+    ServiceState,
+    Service 
+} from '../../types/services';
+import { MusicConfig } from '../../types/core';
 import { logger } from '../../utils/logger';
 
 export class MusicService extends EventEmitter implements IMusicService, Service {
-    private status: MusicStatus;
-    private serviceStatus: ServiceStatus;
+    private serviceStatus: ServiceStatus = {
+        state: 'initializing' as ServiceState,
+        isHealthy: false,
+        lastUpdate: new Date()
+    };
+    private isPlaying: boolean = false;
+    public readonly config: MusicConfig;
 
-    constructor(config: any) {
+    constructor(config: MusicConfig) {
         super();
+        this.config = config;
+        
+        logger.debug('Initializing stub MusicService');
+        
         this.serviceStatus = {
             state: 'initializing',
             isHealthy: false,
             lastUpdate: new Date()
-        };
-        
-        logger.debug('Initializing stub MusicService');
-        
-        this.status = {
-            isPlaying: false,
-            volume: 50,
-            queue: 0
         };
     }
 
@@ -125,5 +131,18 @@ export class MusicService extends EventEmitter implements IMusicService, Service
     public async getStatus(): Promise<MusicStatus> {
         // Return current status
         return this.status;
+    }
+
+    public async stop(): Promise<void> {
+        this.isPlaying = false;
+        this.emit('stateChange', { isPlaying: false });
+    }
+
+    public isPlaying(): boolean {
+        return this.isPlaying;
+    }
+
+    public getStatus(): ServiceStatus {
+        return { ...this.serviceStatus };
     }
 }

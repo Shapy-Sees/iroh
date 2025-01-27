@@ -14,7 +14,8 @@ import {
     DAHDIError,
     DAHDIAudioFormat,
     isDAHDIFormat,
-    DAHDIFormatError
+    DAHDIFormatError,
+    DAHDIEvents
 } from '../types';
 
 import { EventEmitter } from 'events';
@@ -50,6 +51,10 @@ export class DAHDIInterface extends EventEmitter {
         bitDepth: 16,
         format: 'linear'
     };
+
+    // Update event declaration for TypeScript
+    declare emit: (event: keyof DAHDIEvents, ...args: any[]) => boolean;
+    declare on: <K extends keyof DAHDIEvents>(event: K, listener: (arg: DAHDIEvents[K]) => void) => this;
 
     constructor(config: Partial<DAHDIConfig>) {
         super();
@@ -305,10 +310,18 @@ export class DAHDIInterface extends EventEmitter {
     }
 
     private validateAudioFormat(format: Partial<AudioFormat>): format is DAHDIAudioFormat {
-        return format.sampleRate === 8000 &&
-               format.channels === 1 &&
-               format.bitDepth === 16 &&
-               format.format === 'linear';
+        const errors: string[] = [];
+        
+        if (format.sampleRate !== 8000) errors.push('Sample rate must be 8000Hz');
+        if (format.channels !== 1) errors.push('Must be mono');
+        if (format.bitDepth !== 16) errors.push('Must be 16-bit');
+        if (format.format !== 'linear') errors.push('Must be linear PCM');
+
+        if (errors.length > 0) {
+            throw new DAHDIFormatError('Invalid audio format', errors);
+        }
+
+        return true;
     }
 
     public async ring(duration: number = 2000): Promise<void> {
@@ -339,16 +352,37 @@ export class DAHDIInterface extends EventEmitter {
         }
 
         try {
-            const result = await this.fileHandle.write(buffer);
-            if (result.bytesWritten !== buffer.length) {
-                throw new DAHDIError('Incomplete audio write');
+            const { bytesWritten } = await this.fileHandle.write(buffer);
+            
+            if (bytesWritten !== buffer.length) {
+                throw new DAHDIError('Incomplete audio write', {
+                    expected: buffer.length,
+                    written: bytesWritten
+                });
             }
         } catch (error) {
-            throw new DAHDIError('Audio write failed', { cause: error });
+            const dahdiError = new DAHDIError('Audio write failed', { 
+                cause: error,
+                bufferSize: buffer.length 
+            });
+            this.handleError('Audio write operation failed', dahdiError);
+            throw dahdiError;
         }
     }
 
-    public getStatus(): DAHDIChannelStatus | null {
+    public getStatus(): DAHDIChannelStatus {
+        if (!this.channelStatus) {
+            return {
+                isOpen: this.isActive,
+                channel: this.config.channel,
+                alarms: 0,
+                signaling: {
+                    type: 'fxs_ls',
+                    hookstate: 'onhook',
+                    ringing: false
+                }
+            };
+        }
         return this.channelStatus;
     }
 

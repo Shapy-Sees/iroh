@@ -21,12 +21,16 @@ interface DebugConsoleEvents {
     'on-hook': void;
     'dtmf': { digit: string; duration: number };
     'voice': [Buffer, string];
+    'error': Error;
+    'hardware-status': DAHDIChannelStatus;
+    'audio-buffer': AudioBuffer;
 }
 
 interface DebugCommand {
     command: string;
     description: string;
     handler: (...args: string[]) => Promise<void>;
+    category: 'hardware' | 'services' | 'system' | 'test';
 }
 
 export class DebugConsole extends EventEmitter {
@@ -77,7 +81,8 @@ export class DebugConsole extends EventEmitter {
         commands.set('help', {
             command: 'help',
             description: 'Show available commands',
-            handler: async () => this.showHelp()
+            handler: async () => this.showHelp(),
+            category: 'system'
         });
 
         commands.set('exit', {
@@ -86,7 +91,8 @@ export class DebugConsole extends EventEmitter {
             handler: async () => {
                 await this.stop();
                 process.exit(0);
-            }
+            },
+            category: 'system'
         });
 
         // Phone state simulation
@@ -96,7 +102,8 @@ export class DebugConsole extends EventEmitter {
             handler: async () => {
                 logger.info('Debug: Simulating off-hook');
                 this.emit('off-hook');
-            }
+            },
+            category: 'hardware'
         });
 
         commands.set('on-hook', {
@@ -105,7 +112,8 @@ export class DebugConsole extends EventEmitter {
             handler: async () => {
                 logger.info('Debug: Simulating on-hook');
                 this.emit('on-hook');
-            }
+            },
+            category: 'hardware'
         });
 
         // DTMF and voice testing
@@ -119,7 +127,8 @@ export class DebugConsole extends EventEmitter {
                 }
                 logger.info('Debug: Sending DTMF', { digit });
                 this.emit('dtmf', { digit, duration: 100 });
-            }
+            },
+            category: 'hardware'
         });
 
         commands.set('voice', {
@@ -130,7 +139,8 @@ export class DebugConsole extends EventEmitter {
                 logger.info('Debug: Simulating voice command', { text });
                 const dummyBuffer = Buffer.from('Voice simulation');
                 this.emit('voice', dummyBuffer, text);
-            }
+            },
+            category: 'hardware'
         });
 
         // Hardware testing commands
@@ -139,7 +149,8 @@ export class DebugConsole extends EventEmitter {
             description: 'Run hardware diagnostics on FXS port',
             handler: async (port: string = '1') => {
                 await this.testHardware(parseInt(port));
-            }
+            },
+            category: 'hardware'
         });
 
         commands.set('monitor', {
@@ -147,7 +158,8 @@ export class DebugConsole extends EventEmitter {
             description: 'Start monitoring (audio|hardware|events)',
             handler: async (type: string) => {
                 await this.startMonitoring(type as MonitorType);
-            }
+            },
+            category: 'hardware'
         });
 
         commands.set('stop-monitor', {
@@ -155,7 +167,8 @@ export class DebugConsole extends EventEmitter {
             description: 'Stop all monitoring',
             handler: async () => {
                 await this.stopMonitoring();
-            }
+            },
+            category: 'hardware'
         });
 
         // Home Assistant testing
@@ -164,7 +177,8 @@ export class DebugConsole extends EventEmitter {
             description: 'Get Home Assistant entity status',
             handler: async (entity?: string) => {
                 await this.checkHAStatus(entity);
-            }
+            },
+            category: 'services'
         });
 
         commands.set('ha-call', {
@@ -172,7 +186,8 @@ export class DebugConsole extends EventEmitter {
             description: 'Call Home Assistant service',
             handler: async (service: string, data?: string) => {
                 await this.callHAService(service, data ? JSON.parse(data) : undefined);
-            }
+            },
+            category: 'services'
         });
 
         // System commands
@@ -181,7 +196,8 @@ export class DebugConsole extends EventEmitter {
             description: 'Show detailed system status',
             handler: async () => {
                 await this.showDetailedStatus();
-            }
+            },
+            category: 'system'
         });
 
         commands.set('test', {
@@ -189,7 +205,8 @@ export class DebugConsole extends EventEmitter {
             description: 'Run test suite for component',
             handler: async (component: string) => {
                 await this.runTests(component);
-            }
+            },
+            category: 'test'
         });
 
         return commands;
@@ -248,6 +265,47 @@ export class DebugConsole extends EventEmitter {
         }
     }
 
+    private async testLineVoltage(port: number): Promise<void> {
+        try {
+            const phone = this.app.getPhoneController();
+            const voltage = await phone.getLineVoltage(port);
+            logger.info('Line voltage test', { port, voltage });
+        } catch (error) {
+            throw new HardwareError(`Line voltage test failed: ${String(error)}`);
+        }
+    }
+
+    private async testRingGeneration(port: number): Promise<void> {
+        try {
+            const phone = this.app.getPhoneController();
+            await phone.testRing(port);
+            logger.info('Ring generation test complete', { port });
+        } catch (error) {
+            throw new HardwareError(`Ring generation test failed: ${String(error)}`);
+        }
+    }
+
+    private async testAudioPath(port: number): Promise<void> {
+        try {
+            const testTone = this.generateTestTone();
+            const phone = this.app.getPhoneController();
+            await phone.playAudio(testTone);
+            logger.info('Audio path test complete', { port });
+        } catch (error) {
+            throw new HardwareError(`Audio path test failed: ${String(error)}`);
+        }
+    }
+
+    private async testDTMF(port: number): Promise<void> {
+        try {
+            const phone = this.app.getPhoneController();
+            await phone.testDTMF(port);
+            logger.info('DTMF test complete', { port });
+        } catch (error) {
+            throw new HardwareError(`DTMF test failed: ${String(error)}`);
+        }
+    }
+
     private async startMonitoring(type: MonitorType): Promise<void> {
         switch (type) {
             case 'audio':
@@ -258,6 +316,7 @@ export class DebugConsole extends EventEmitter {
             case 'hardware':
                 this.hardwareMonitoring = true;
                 logger.info('Hardware monitoring started');
+                this.monitorHardwareStatus();
                 break;
                 
             case 'events':
@@ -376,7 +435,7 @@ export class DebugConsole extends EventEmitter {
         // Group commands by category
         const categories = new Map<string, DebugCommand[]>();
         for (const cmd of this.commands.values()) {
-            const category = cmd.command.split('.')[0] || 'general';
+            const category = cmd.category;
             if (!categories.has(category)) {
                 categories.set(category, []);
             }
@@ -420,6 +479,30 @@ export class DebugConsole extends EventEmitter {
     private async runHATests(): Promise<void> {
         // Implementation
         logger.debug('Running HA tests');
+    }
+
+    // Add new debug methods
+    private async simulateError(type: string, details?: Record<string, unknown>): Promise<void> {
+        switch (type) {
+            case 'hardware':
+                this.emit('error', new HardwareError('Simulated hardware error', details));
+                break;
+            case 'service':
+                this.emit('error', new ServiceError('Simulated service error', details));
+                break;
+            default:
+                throw new Error(`Unknown error type: ${type}`);
+        }
+    }
+
+    private async monitorHardwareStatus(): Promise<void> {
+        if (!this.hardwareMonitoring) return;
+
+        const phone = this.app.getPhoneController();
+        const status = await phone.getStatus();
+        this.emit('hardware-status', status);
+        
+        setTimeout(() => this.monitorHardwareStatus(), 1000);
     }
 }
 
