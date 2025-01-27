@@ -4,8 +4,9 @@
 // Contains all the core types needed for DAHDI hardware interaction
 
 import { Buffer } from 'buffer';
-import { AudioInput } from './audio';
+import { AudioInput, AudioFormat } from './audio';
 import { BaseConfig } from '../core';
+import { DAHDIConfig } from '../hardware-config';
 
 // Base hardware error class
 export class HardwareError extends Error {
@@ -28,31 +29,24 @@ export class DAHDIFormatError extends HardwareError {
     }
 }
 
-// Core DAHDI configuration interface
-export interface DAHDIConfig extends BaseConfig {
-    /** Path to DAHDI device */
-    devicePath: string;
-    
-    /** Path to DAHDI control interface */
-    controlPath: string;
-    
-    /** Sample rate - DAHDI requires 8000 Hz */
+// Update DAHDIAudioFormat to extend from AudioFormat
+export interface DAHDIAudioFormat extends AudioFormat {
+    /** Must be 8000 Hz */
     sampleRate: 8000;
-    
-    /** Number of channels - DAHDI requires mono */
+    /** Must be mono */
     channels: 1;
-    
-    /** Bit depth - DAHDI requires 16-bit */
+    /** Must be 16-bit */
     bitDepth: 16;
-    
-    /** Buffer size in bytes */
-    bufferSize: number;
-    
-    /** DAHDI channel number */
-    channel: number;
-    
-    /** Status monitoring interval in ms */
-    monitorInterval?: number;
+    /** Required format */
+    format: 'linear';
+}
+
+// Add format validation type guard
+export function isDAHDIFormat(format: Partial<AudioFormat>): format is DAHDIAudioFormat {
+    return format.sampleRate === 8000 &&
+           format.channels === 1 &&
+           format.bitDepth === 16 &&
+           format.format === 'linear';
 }
 
 // Channel configuration
@@ -77,21 +71,6 @@ export interface DAHDIChannelConfig {
     
     /** Line impedance in ohms */
     impedance: 600 | 900;
-}
-
-// Audio format requirements
-export interface DAHDIAudioFormat {
-    /** Sample rate must be 8000 Hz */
-    sampleRate: 8000;
-    
-    /** Must be mono */
-    channels: 1;
-    
-    /** Must be 16-bit */
-    bitDepth: 16;
-    
-    /** Linear PCM format */
-    format: 'linear';
 }
 
 // Buffer information for audio handling

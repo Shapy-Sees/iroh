@@ -97,10 +97,10 @@ export class Logger {
         });
     }
 
-    public error(message: string, metadata?: Partial<LogMetadata>): void {
-        const enrichedMetadata = this.enrichMetadata('error', metadata);
+    public error(message: string, metadata?: Partial<ErrorLogMetadata>): void {
+        const enrichedMetadata = this.enrichMetadata('error', metadata) as ErrorLogMetadata;
         if (!validateMetadata(enrichedMetadata)) {
-            console.error('Invalid log metadata:', enrichedMetadata);
+            console.error('Invalid error metadata:', enrichedMetadata);
             this.logger.error(message);
             return;
         }
@@ -123,53 +123,65 @@ export class Logger {
     }
 
     private enrichMetadata(level: LogLevel, metadata?: Partial<LogMetadata>): LogMetadata {
-        if (!metadata?.component) {
-            metadata = { ...metadata, component: 'system' };
-        }
-
-        const enriched = {
+        const baseMetadata: Partial<BaseLogMetadata> = {
             timestamp: new Date().toISOString(),
-            ...metadata,
+            component: metadata?.component || 'system',
+            type: metadata?.type || 'error',
             context: {
                 nodeEnv: process.env.NODE_ENV,
                 ...metadata?.context
             }
-        } as LogMetadata;
+        };
 
-        // Add type-specific enrichments
-        if (isErrorMetadata(enriched)) {
-            this.enrichErrorMetadata(enriched);
-        } else if (isHardwareMetadata(enriched)) {
-            this.enrichHardwareMetadata(enriched);
-        } else if (isAudioMetadata(enriched)) {
-            this.enrichAudioMetadata(enriched);
-        } else if (isServiceMetadata(enriched)) {
-            this.enrichServiceMetadata(enriched);
-        } else if (isCommandMetadata(enriched)) {
-            this.enrichCommandMetadata(enriched);
-        } else if (isStateMetadata(enriched)) {
-            this.enrichStateMetadata(enriched);
+        let enriched: LogMetadata;
+
+        switch (metadata?.type) {
+            case 'error':
+                enriched = this.enrichErrorMetadata(baseMetadata, metadata as Partial<ErrorLogMetadata>);
+                break;
+            case 'hardware':
+                enriched = this.enrichHardwareMetadata(baseMetadata, metadata as Partial<HardwareLogMetadata>);
+                break;
+            // ...handle other types similarly...
+            default:
+                enriched = { ...baseMetadata, type: 'error' } as ErrorLogMetadata;
         }
 
         return enriched;
     }
 
-    private enrichErrorMetadata(metadata: ErrorLogMetadata): void {
-        if (metadata.error && metadata.error instanceof Error) {
-            const errorObj = {
-                message: metadata.error.message,
-                name: metadata.error.name,
-                stack: metadata.error.stack,
-                code: (metadata.error as any).code
-            };
+    private enrichErrorMetadata(
+        base: Partial<BaseLogMetadata>, 
+        metadata?: Partial<ErrorLogMetadata>
+    ): ErrorLogMetadata {
+        const error = metadata?.error instanceof Error ? {
+            message: metadata.error.message,
+            name: metadata.error.name,
+            stack: metadata.error.stack,
+            code: (metadata.error as any).code
+        } : metadata?.error;
 
-            metadata.error = errorObj;
-            metadata.severity = metadata.severity || ErrorSeverity.MEDIUM;
-        }
+        return {
+            ...base,
+            type: 'error',
+            component: base.component || 'system',
+            error: error || { message: 'Unknown error', name: 'Error' },
+            severity: metadata?.severity || ErrorSeverity.MEDIUM
+        } as ErrorLogMetadata;
     }
 
-    private enrichHardwareMetadata(metadata: HardwareLogMetadata): void {
-        // Add any hardware-specific enrichments
+    private enrichHardwareMetadata(
+        base: Partial<BaseLogMetadata>,
+        metadata: Partial<HardwareLogMetadata>
+    ): HardwareLogMetadata {
+        return {
+            ...base,
+            type: 'hardware',
+            component: 'hardware',
+            deviceId: metadata.deviceId || 'unknown',
+            status: metadata.status,
+            metrics: metadata.metrics
+        } as HardwareLogMetadata;
     }
 
     private enrichAudioMetadata(metadata: AudioLogMetadata): void {

@@ -3,6 +3,8 @@
 import { Buffer } from 'buffer';
 import { HardwareError } from './dahdi';
 
+export type AudioBuffer = Buffer;
+
 export interface AudioConfig {
     sampleRate: 8000;
     channels: 1;
@@ -46,7 +48,7 @@ export interface AudioFormat {
     sampleRate: number;
     channels: number;
     bitDepth: number;
-    encoding?: 'linear' | 'alaw' | 'ulaw';
+    format?: 'linear' | 'alaw' | 'ulaw';
 }
 
 export function isValidAudioFormat(format: Partial<AudioFormat>): format is AudioFormat {
@@ -54,7 +56,7 @@ export function isValidAudioFormat(format: Partial<AudioFormat>): format is Audi
         typeof format.sampleRate === 'number' &&
         typeof format.channels === 'number' &&
         typeof format.bitDepth === 'number' &&
-        (!format.encoding || ['linear', 'alaw', 'ulaw'].includes(format.encoding))
+        (!format.format || ['linear', 'alaw', 'ulaw'].includes(format.format))
     );
 }
 

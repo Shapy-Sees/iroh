@@ -1,5 +1,11 @@
+// src/types/hardware.ts
+// This file defines the configuration for the hardware interface.
+
+
 import { BaseConfig } from './core';
 import { DAHDI_CONSTANTS } from '../config/constants';
+import { AudioFormat } from './hardware/audio';
+import { FXSConfig } from './hardware/fxs';
 
 export enum HardwareState {
     INITIALIZING = 'initializing',
@@ -11,11 +17,16 @@ export enum HardwareState {
 export interface HardwareConfig extends BaseConfig {
     dahdi: DAHDIConfig;
     audio: AudioConfig;
+    fxs?: FXSConfig;
 }
 
-export interface DAHDIConfig {
+export interface DAHDIConfig extends BaseConfig {
     devicePath: string;
+    controlPath: string;
     sampleRate: typeof DAHDI_CONSTANTS.SAMPLE_RATE;
+    channels: 1;
+    bitDepth: 16;
+    bufferSize: number;
     channel: {
         number: number;
         ringCadence: [number, number];
@@ -48,6 +59,7 @@ export interface DAHDIConfig {
         logAudio: boolean;
         traceDahdi: boolean;
     };
+    monitorInterval?: number;
 }
 
 export interface AudioConfig {
@@ -55,4 +67,8 @@ export interface AudioConfig {
     channels: number;
     bitDepth: number;
     bufferSize: number;
+    vadThreshold: number;
+    silenceThreshold: number;
+    noiseReduction?: boolean;
+    echoCancellation?: boolean;
 }

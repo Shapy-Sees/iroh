@@ -28,5 +28,4 @@ export interface Config {
 }
 
 // Remove duplicate interface definitions and use imports
-export type { AppConfig, LogConfig } from './core';
-export type { AudioConfig, ServiceConfig } from './services';
+export type { AppConfig, AudioConfig, ServiceConfig } from './core';

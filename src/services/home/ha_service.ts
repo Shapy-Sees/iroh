@@ -6,22 +6,19 @@
 // It abstracts the Home Assistant complexity from the rest of the application.
 
 import { EventEmitter } from 'events';
-import { HAClient, HAEntity, HAServiceCall } from './ha_client';
+import { HAClient } from './ha_client';
 import { Cache } from '../../utils/cache';
 import { logger } from '../../utils/logger';
+import { Service, ServiceStatus } from '../../types/services';
 import { 
     HAEntity, 
     HAConfig, 
     HAServiceCall,
-    // ... others??
 } from './types';
-
-
-
 
 type EntityStateHandler = (entityId: string, state: HAEntity) => Promise<void>;
 
-export class HAService extends EventEmitter {
+export class HAService extends EventEmitter implements Service {
     private client: HAClient;
     private cache: Cache;
     private updateInterval: NodeJS.Timeout | null = null;
@@ -207,14 +204,10 @@ export class HAService extends EventEmitter {
         });
     }
 
-    public getStatus(): {
-        isConnected: boolean;
-        entityCount: number;
-        lastUpdate: Date;
-    } {
+    public getStatus(): ServiceStatus {
         return {
-            isConnected: this.client.isHealthy(),
-            entityCount: this.cache.size(),
+            state: this.client.isHealthy() ? 'ready' : 'error',
+            isHealthy: this.client.isHealthy(),
             lastUpdate: new Date()
         };
     }
@@ -230,5 +223,9 @@ export class HAService extends EventEmitter {
         await this.client.shutdown();
         await this.cache.shutdown();
         this.removeAllListeners();
+    }
+
+    public isHealthy(): boolean {
+        return this.client.isHealthy();
     }
 }

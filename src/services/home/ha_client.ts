@@ -8,35 +8,13 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
-import { 
-    HAEntity, 
-    HAServiceCall, //there are others... right?
-} from '../../types';
+import { HAEntity, HAServiceCall } from './types';
 
 export interface HAClientConfig {
     url: string;
     token: string;
     retryAttempts?: number;
     retryDelay?: number;
-}
-
-export interface HAEntity {
-    entity_id: string;
-    state: string;
-    attributes: Record<string, any>;
-    last_changed: string;
-    last_updated: string;
-}
-
-export interface HAServiceCall {
-    domain: string;
-    service: string;
-    target?: {
-        entity_id?: string | string[];
-        device_id?: string | string[];
-        area_id?: string | string[];
-    };
-    service_data?: Record<string, any>;
 }
 
 export class HAClient extends EventEmitter {

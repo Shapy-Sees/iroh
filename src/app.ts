@@ -18,6 +18,7 @@ import {
     LogConfig,
     HardwareEvent 
 } from './types/core';
+import { HardwareConfig } from './types/hardware-config';  // Updated import
 import { config } from './config';
 import { logger } from './utils/logger';
 import { DAHDI_CONSTANTS } from './core/constants';

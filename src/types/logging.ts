@@ -1,4 +1,13 @@
-import { ErrorSeverity } from './errors';
+// Define log levels
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+
+// Define error severity levels
+export enum ErrorSeverity {
+    LOW = 'low',
+    MEDIUM = 'medium',
+    HIGH = 'high',
+    CRITICAL = 'critical'
+}
 
 // Component types for metadata
 export type LogComponent = 'hardware' | 'audio' | 'service' | 'system' | 'ai' | 'state';
@@ -10,6 +19,7 @@ export interface BaseLogMetadata {
     context?: Record<string, unknown>;
     operation?: string;
     severity?: ErrorSeverity;
+    type: string;
 }
 
 // Specific metadata interfaces extending base
@@ -21,6 +31,7 @@ export interface ErrorLogMetadata extends BaseLogMetadata {
         code?: string;
         stack?: string;
     };
+    severity: ErrorSeverity;
 }
 
 export interface HardwareLogMetadata extends BaseLogMetadata {
@@ -103,7 +114,7 @@ export interface LogEntry {
 
 // Type guards with discriminated unions
 export const isErrorMetadata = (metadata: LogMetadata): metadata is ErrorLogMetadata =>
-    'type' in metadata && metadata.type === 'error' && 'error' in metadata;
+    metadata.type === 'error' && 'error' in metadata;
 
 export const isHardwareMetadata = (metadata: LogMetadata): metadata is HardwareLogMetadata =>
     metadata.type === 'hardware' && 'deviceId' in metadata;

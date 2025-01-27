@@ -25,13 +25,13 @@ import { MusicService } from './music/music-service';
 import { TimerService } from './timer/timer-service';
 import { HardwareService } from './hardware/hardware-service';
 import { IntentHandler } from './intent/intent-handler';
-import { Config, ServiceError } from '../types/core';
+import { Config } from '../types/core';
 import type { AudioBuffer } from '../types/hardware/audio';
-import type { HAEvent } from '../types/service/home';
+import type { HAEvent } from '../types/services/home';
 import { logger } from '../utils/logger';
 import { PhoneController } from '../controllers/phone-controller';
 import { errorHandler } from '../utils/error-handler';
-import { Config, AIConfig, HAConfig } from '../types';
+import { AIConfig, HAConfig } from '../types';
 import { DAHDIConfig } from '../types/hardware/dahdi';
 
 interface ServiceManagerState {
@@ -46,6 +46,30 @@ export interface ServiceManager {
     getHAEntityStatus(entity: string): Promise<any>;
     getHAStatus(): Promise<any>;
     callHAService(service: string, data?: any): Promise<void>;
+}
+
+// Add service manager event types
+interface ServiceManagerEvents {
+    'initialized': () => void;
+    'error': (error: ServiceError) => void;
+    'response': (audio: AudioBuffer) => void;
+    'stateChange': (serviceName: ServiceName, status: ServiceStatus) => void;
+}
+
+// Add missing error types
+class ConfigurationError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ConfigurationError';
+    }
+}
+
+interface AIServiceConfig extends BaseConfig {
+    anthropicKey: string;
+    elevenLabsKey: string;
+    maxTokens: number;
+    temperature: number;
+    model: string;
 }
 
 export class ServiceManager extends EventEmitter {
@@ -99,7 +123,7 @@ export class ServiceManager extends EventEmitter {
 
     private createService<T extends ServiceName>(
         name: T,
-        factory: () => ServiceRegistry[T]
+        factory: () => ServiceRegistry[T] & Service
     ): void {
         const service = factory();
         this.services.set(name, service);
@@ -109,9 +133,21 @@ export class ServiceManager extends EventEmitter {
     public getService<T extends ServiceName>(name: T): ServiceRegistry[T] {
         const service = this.services.get(name);
         if (!service) {
-            throw new Error(`Service ${name} not found`);
+            throw new ConfigurationError(`Service ${name} not found`);
+        }
+        if (!this.isValidService(service)) {
+            throw new ConfigurationError(`Invalid service implementation for ${name}`);
         }
         return service as ServiceRegistry[T];
+    }
+
+    private isValidService(service: unknown): service is Service {
+        return (
+            typeof (service as Service).initialize === 'function' &&
+            typeof (service as Service).shutdown === 'function' &&
+            typeof (service as Service).getStatus === 'function' &&
+            typeof (service as Service).isHealthy === 'function'
+        );
     }
 
     private setupEventHandlers(): void {
@@ -203,6 +239,12 @@ export class ServiceManager extends EventEmitter {
         for (const serviceName of initOrder) {
             try {
                 const service = this.getService(serviceName);
+                
+                // Validate service implements required interface
+                if (!this.isValidService(service)) {
+                    throw new ConfigurationError(`Invalid service implementation for ${serviceName}`);
+                }
+
                 await service.initialize();
                 
                 this.state.activeServices.add(serviceName);

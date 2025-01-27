@@ -1,7 +1,8 @@
 import { Buffer } from 'buffer';
 import { LOG_LEVELS } from '../config/constants';
+import { HardwareConfig } from './hardware-config';
 
-// Core result and error types
+// Core result type
 export interface Result<T, E = Error> {
     success: boolean;
     data?: T;
@@ -16,56 +17,73 @@ export interface BaseConfig {
     timeout?: number;
 }
 
-export interface HardwareConfig {
-    dahdi: {
-        devicePath: string;
-        sampleRate: 8000;
-        channel: {
-            number: number;
-            ringCadence: [number, number];
-            callerIdFormat: 'bell' | 'v23' | 'dtmf';
-            impedance: 600 | 900;
-            gain: {
-                rx: number;
-                tx: number;
-            };
-        };
-        audio: {
-            echoCancellation: {
-                enabled: boolean;
-                taps: number;
-                nlp: boolean;
-            };
-            gainControl: {
-                enabled: boolean;
-                targetLevel: number;
-                maxGain: number;
-            };
-            dtmfDetection: {
-                useHardware: boolean;
-                minDuration: number;
-                threshold: number;
-            };
-        };
-        debug?: {
-            logHardware: boolean;
-            logAudio: boolean;
-            traceDahdi: boolean;
-        };
-    };
-    audio: {
-        sampleRate: number;
-        channels: number;
-        bitDepth: number;
-        vadThreshold: number;
-        silenceThreshold: number;
-    };
-}
-
 export interface BaseStatus {
     isHealthy: boolean;
     lastError?: Error;
     metadata?: Record<string, unknown>;
+}
+
+// Service configuration interfaces
+export interface AIConfig extends BaseConfig {
+    anthropicKey: string;
+    elevenLabsKey: string;
+    openAIKey: string;
+    maxTokens: number;
+    temperature: number;
+    voiceId: string;
+    models?: {
+        default: string;
+        chat: string;
+        embedding: string;
+    };
+}
+
+export interface MusicConfig extends BaseConfig {
+    spotifyClientId?: string;
+    spotifyClientSecret?: string;
+    defaultVolume?: number;
+    crossfadeDuration?: number;
+}
+
+export interface HomeConfig extends BaseConfig {
+    homekitBridge: {
+        pin: string;
+        name: string;
+        port: number;
+    };
+    mqttBroker?: {
+        url: string;
+        username?: string;
+        password?: string;
+    };
+}
+
+// Application configuration
+export interface AppConfig extends BaseConfig {
+    name: string;
+    version: string;
+    environment: 'development' | 'production' | 'test';
+    port: number;
+    apiKeys?: Record<string, string>;
+}
+
+// Unified configuration interface
+export interface Config {
+    app: AppConfig;
+    hardware: HardwareConfig;
+    ai: AIConfig;
+    music: MusicConfig;
+    home: HomeConfig;
+    logging: LogConfig;
+}
+
+export interface LogConfig {
+    level: LogLevel;
+    file?: string;
+    console: boolean;
+    format?: 'json' | 'text';
+    maxFiles?: number;
+    maxSize?: string;
 }
 
 // Event system types
@@ -103,5 +121,27 @@ export interface DiagnosticResult {
 // Logging types
 export type LogLevel = typeof LOG_LEVELS[number];
 
-// Re-export hardware types
-export * from './hardware';
+// Hardware event interface
+export interface HardwareEvent extends BaseEvent {
+    deviceId: string;
+    status: 'connected' | 'disconnected' | 'error';
+    error?: Error;
+}
+
+// Re-export essential types
+export * from './errors';
+export type { LogLevel, LogMetadata } from './logging';
+export type { HardwareConfig } from './hardware-config';
+
+export interface AudioConfig {
+    sampleRate: number;
+    channels: number;
+    bitDepth: number;
+    bufferSize?: number;
+}
+
+export interface ServiceConfig extends BaseConfig {
+    app: AppConfig;
+    hardware: HardwareConfig; 
+    logging: LogConfig;
+}

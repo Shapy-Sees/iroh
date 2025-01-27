@@ -21,6 +21,7 @@ import {
     ErrorSeverity,
     HardwareEvent
 } from '../types/core';
+import { DAHDIError } from '../types/hardware-config';  // Updated import
 
 import { DAHDIInterface } from '../hardware/dahdi-interface';
 import { DTMFDetector } from '../audio/dtmf-detector';
@@ -29,7 +30,6 @@ import { AudioPipeline } from '../audio/pipeline';
 import { PhoneFeedbackHandler } from './phone-feedback-handler';
 import { logger } from '../utils/logger';
 import { ErrorHandler } from '../utils/error-handler';
-import { DAHDIError } from '../types/hardware/dahdi';
 import { AudioError } from '../types/hardware/audio';
 
 // Phone states based on DAHDI hardware states

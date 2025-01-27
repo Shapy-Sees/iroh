@@ -11,37 +11,64 @@
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger';
 
-// Define standard event types
-export interface SystemEvents {
-    'system:ready': void;
-    'system:error': Error;
-    'system:shutdown': void;
+// Define event payload types
+export interface BaseEventPayload {
+    timestamp: number;
+    id: string;
 }
 
-export interface PhoneEvents {
-    'phone:offHook': void;
-    'phone:onHook': void;
-    'phone:dtmf': { digit: string; duration: number };
-    'phone:voice': { audio: Buffer; duration: number };
+export interface SystemEventPayloads {
+    'system:ready': BaseEventPayload;
+    'system:error': BaseEventPayload & { error: Error };
+    'system:shutdown': BaseEventPayload;
+    'system:stateChange': BaseEventPayload & {
+        previousState: string;
+        currentState: string;
+    };
 }
 
-export interface HomeEvents {
-    'home:deviceChange': { deviceId: string; state: any };
-    'home:sceneActivated': { sceneId: string };
+export interface PhoneEventPayloads {
+    'phone:offHook': BaseEventPayload;
+    'phone:onHook': BaseEventPayload;
+    'phone:dtmf': BaseEventPayload & { 
+        digit: string;
+        duration: number;
+    };
+    'phone:voice': BaseEventPayload & {
+        audio: Buffer;
+        duration: number;
+    };
 }
 
-export interface MusicEvents {
-    'music:play': { track: string };
-    'music:pause': void;
-    'music:next': void;
-    'music:previous': void;
+export interface HomeEventPayloads {
+    'home:deviceChange': BaseEventPayload & {
+        deviceId: string;
+        state: any;
+    };
+    'home:sceneActivated': BaseEventPayload & {
+        sceneId: string;
+    };
+}
+
+export interface MusicEventPayloads {
+    'music:play': BaseEventPayload & {
+        track: string;
+    };
+    'music:pause': BaseEventPayload;
+    'music:next': BaseEventPayload;
+    'music:previous': BaseEventPayload;
 }
 
 // Combine all event types
-export type IrohEvents = SystemEvents & PhoneEvents & HomeEvents & MusicEvents;
+export type IrohEventPayloads = SystemEventPayloads & 
+    PhoneEventPayloads & 
+    HomeEventPayloads & 
+    MusicEventPayloads;
+
+export type EventName = keyof IrohEventPayloads;
 
 interface EventHistoryItem<T = any> {
-    event: keyof IrohEvents;
+    event: EventName;
     data: T;
     timestamp: number;
     id: string;
@@ -71,50 +98,49 @@ export class EventBus extends EventEmitter {
         }
     }
 
-    public emit<K extends keyof IrohEvents>(
+    public emit<K extends EventName>(
         event: K,
-        data?: IrohEvents[K]
+        payload: Omit<IrohEventPayloads[K], keyof BaseEventPayload>
     ): boolean {
-        const eventId = this.generateEventId();
-        
-        // Track event in history
-        this.trackEvent({
-            event,
-            data,
+        const fullPayload = {
+            ...payload,
             timestamp: Date.now(),
-            id: eventId
-        });
+            id: this.generateEventId(),
+        } as IrohEventPayloads[K];
+
+        // Track event in history
+        this.trackEvent(event, fullPayload);
 
         // Log in debug mode
         if (this.isDebugMode) {
-            logger.debug(`Emitting event: ${String(event)}`, { eventId, data });
+            logger.debug(`Emitting event: ${String(event)}`, { eventId: fullPayload.id, data: fullPayload });
         }
 
         // Emit to standard EventEmitter
-        const result = super.emit(event as string, data);
+        const result = super.emit(event as string, fullPayload);
 
         // Emit to pattern subscribers
-        this.emitToPatternSubscribers(event, data);
+        this.emitToPatternSubscribers(event, fullPayload);
 
         return result;
     }
 
-    public on<K extends keyof IrohEvents>(
+    public on<K extends EventName>(
         event: K,
-        listener: (data: IrohEvents[K]) => void
+        listener: (payload: IrohEventPayloads[K]) => void
     ): this {
         this.addSubscriber(event, listener);
         super.on(event as string, listener);
         return this;
     }
 
-    public once<K extends keyof IrohEvents>(
+    public once<K extends EventName>(
         event: K,
-        listener: (data: IrohEvents[K]) => void
+        listener: (payload: IrohEventPayloads[K]) => void
     ): this {
-        const onceWrapper = (data: IrohEvents[K]) => {
+        const onceWrapper = (payload: IrohEventPayloads[K]) => {
             this.removeSubscriber(event, onceWrapper);
-            listener(data);
+            listener(payload);
         };
         
         this.addSubscriber(event, onceWrapper);
@@ -122,26 +148,26 @@ export class EventBus extends EventEmitter {
         return this;
     }
 
-    public off<K extends keyof IrohEvents>(
+    public off<K extends EventName>(
         event: K,
-        listener: (data: IrohEvents[K]) => void
+        listener: (payload: IrohEventPayloads[K]) => void
     ): this {
         this.removeSubscriber(event, listener);
         super.off(event as string, listener);
         return this;
     }
 
-    public subscribe<K extends keyof IrohEvents>(
+    public subscribe<K extends EventName>(
         pattern: string | RegExp,
-        listener: (event: K, data: IrohEvents[K]) => void
+        listener: (event: K, payload: IrohEventPayloads[K]) => void
     ): () => void {
         const matcher = typeof pattern === 'string' 
             ? new RegExp(`^${pattern.replace('*', '.*')}$`)
             : pattern;
 
-        const wrapper = (event: K, data: IrohEvents[K]) => {
+        const wrapper = (event: K, payload: IrohEventPayloads[K]) => {
             if (matcher.test(String(event))) {
-                listener(event, data);
+                listener(event, payload);
             }
         };
 
@@ -165,20 +191,25 @@ export class EventBus extends EventEmitter {
         }
     }
 
-    private emitToPatternSubscribers<K extends keyof IrohEvents>(
+    private emitToPatternSubscribers<K extends EventName>(
         event: K,
-        data: IrohEvents[K]
+        payload: IrohEventPayloads[K]
     ): void {
         const patternSubscribers = this.subscribers.get('pattern');
         if (patternSubscribers) {
             for (const subscriber of patternSubscribers) {
-                subscriber(event, data);
+                subscriber(event, payload);
             }
         }
     }
 
-    private trackEvent(item: EventHistoryItem): void {
-        this.eventHistory.push(item);
+    private trackEvent(event: EventName, payload: any): void {
+        this.eventHistory.push({
+            event,
+            data: payload,
+            timestamp: payload.timestamp,
+            id: payload.id
+        });
         
         // Keep history within limit
         while (this.eventHistory.length > this.MAX_HISTORY) {
@@ -194,7 +225,7 @@ export class EventBus extends EventEmitter {
         filter?: {
             after?: number;
             before?: number;
-            types?: Array<keyof IrohEvents>;
+            types?: Array<EventName>;
         }
     ): void {
         let events = [...this.eventHistory];
@@ -221,7 +252,7 @@ export class EventBus extends EventEmitter {
         this.eventHistory.length = 0;
     }
 
-    public getSubscriberCount(event: keyof IrohEvents): number {
+    public getSubscriberCount(event: EventName): number {
         return this.subscribers.get(String(event))?.size || 0;
     }
 

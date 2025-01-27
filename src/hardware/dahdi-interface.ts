@@ -9,11 +9,12 @@ import {
     AudioFormat,
     AudioInput,
     Result,
-    FXSConfig,
     HardwareEvent,
     DAHDIConfig,
-    DAHDIError
-} from '../types/core';
+    DAHDIError,
+    DAHDIAudioFormat,
+    isDAHDIFormat
+} from '../types';
 
 import { EventEmitter } from 'events';
 import { promises as fs } from 'fs';
@@ -24,7 +25,6 @@ import { DAHDIAudioConverter } from './dahdi-audio-converter';
 
 import {
     DAHDIChannelConfig,
-    DAHDIAudioFormat,
     DAHDIIOCtl,
     DAHDIBufferInfo,
     DAHDIChannelStatus,
@@ -44,11 +44,11 @@ export class DAHDIInterface extends EventEmitter {
     private lastError: Error | null = null;
     private channelStatus: DAHDIChannelStatus | null = null;
     private audioConverter: DAHDIAudioConverter;
-    private readonly audioFormat: AudioFormat = {
+    private readonly audioFormat: DAHDIAudioFormat = {
         sampleRate: 8000,
         channels: 1,
         bitDepth: 16,
-        encoding: 'linear'
+        format: 'linear'
     };
 
     constructor(config: Partial<DAHDIConfig>) {
@@ -232,6 +232,7 @@ export class DAHDIInterface extends EventEmitter {
             const bytesRead = await this.fileHandle.read(buffer, 0, buffer.length);
 
             if (bytesRead > 0) {
+                // Ensure audio format compliance
                 const audioInput: AudioInput = {
                     sampleRate: this.audioFormat.sampleRate,
                     channels: this.audioFormat.channels,
@@ -242,13 +243,12 @@ export class DAHDIInterface extends EventEmitter {
                 this.emit('audio', audioInput);
             }
 
+            // Continue reading if active
             if (this.isActive) {
                 setImmediate(() => this.readAudioLoop());
             }
         } catch (error) {
-            logger.error('Error in audio read loop:', error);
-            this.emit('error', new DAHDIError('Audio read error', error as Error));
-            setTimeout(() => this.readAudioLoop(), 1000);
+            this.handleError('Audio read error', error);
         }
     }
 
@@ -268,16 +268,17 @@ export class DAHDIInterface extends EventEmitter {
       }
     
      // Handles audio playback with format conversion 
-    public async playAudio(buffer: Buffer, format: Partial<AudioFormat> = this.audioFormat): Promise<void> {
+    public async playAudio(buffer: Buffer, format: Partial<AudioFormat> = {}): Promise<void> {
         try {
-            const convertedBuffer = await this.audioConverter.convertToDAHDI(buffer, format);
-            await this.writeAudio(convertedBuffer);
-        } catch (error) {
-            if (error instanceof AudioError) {
-                logger.error('Audio format error:', error);
-                throw error;
+            // Validate and convert format if needed
+            if (!isDAHDIFormat(format)) {
+                const convertedBuffer = await this.audioConverter.convertToDAHDI(buffer, format);
+                await this.writeAudio(convertedBuffer);
+            } else {
+                await this.writeAudio(buffer);
             }
-            throw new DAHDIError('Audio playback failed', error as Error);
+        } catch (error) {
+            throw new DAHDIError('Audio playback failed', { cause: error });
         }
     }
 
@@ -375,5 +376,12 @@ export class DAHDIInterface extends EventEmitter {
             logger.error('Error stopping DAHDI interface:', error);
             throw new DAHDIError('Failed to stop interface', error as Error);
         }
+    }
+
+    private handleError(context: string, error: unknown): void {
+        const dahdiError = new DAHDIError(context, { cause: error });
+        logger.error(dahdiError.message, { error: dahdiError });
+        this.emit('error', dahdiError);
+        this.lastError = dahdiError;
     }
 }

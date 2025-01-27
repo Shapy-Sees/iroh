@@ -5,35 +5,19 @@
 
 import { 
     ErrorSeverity,
-    IrohError,
-    Result,
     ErrorContext,
-    ErrorHandlerEvents
-} from '../types/core';
-
+    IrohError,
+    HardwareError,
+    ServiceError,
+    ensureError,
+    isIrohError,
+    getErrorSeverity
+} from '../types/errors';
 import { EventEmitter } from 'events';
 import { logger } from './logger';
 import { createLogMetadata } from '../types/logging';
-import { ErrorSeverity, IrohError } from '../types/errors';
 
-// Error severity levels
-export enum ErrorSeverity {
-    LOW = 'low',
-    MEDIUM = 'medium',
-    HIGH = 'high',
-    CRITICAL = 'critical'
-}
-
-// Context for error handling
-export interface ErrorContext {
-    component: string;
-    operation: string;
-    severity?: ErrorSeverity;
-    timestamp?: Date;
-    metadata?: Record<string, any>;
-}
-
-// Add type-safe event definitions
+// Error handler events interface
 interface ErrorHandlerEvents {
     error: (data: { error: Error; context: ErrorContext }) => void;
     criticalError: (data: { error: Error; context: ErrorContext }) => void;
@@ -143,16 +127,7 @@ export class ErrorHandler extends EventEmitter {
     }
 
     private classifyError(error: Error): ErrorSeverity {
-        if (error instanceof HardwareError) {
-            return ErrorSeverity.HIGH;
-        }
-        if (error instanceof ServiceError) {
-            return ErrorSeverity.MEDIUM;
-        }
-        if (error instanceof IrohError) {
-            return ErrorSeverity.LOW;
-        }
-        return ErrorSeverity.MEDIUM;
+        return getErrorSeverity(error);
     }
 
     private async handleCriticalError(error: Error, context: ErrorContext): Promise<void> {

@@ -1,11 +1,27 @@
 // src/types/errors.ts
 
-import { Result } from './index';
+import { Result } from './core';
 
-interface ErrorDetails {
+export enum ErrorSeverity {
+    LOW = 'low',
+    MEDIUM = 'medium',
+    HIGH = 'high',
+    CRITICAL = 'critical'
+}
+
+export interface ErrorContext {
+    component: string;
+    operation: string;
+    severity?: ErrorSeverity;
+    timestamp?: Date;
+    metadata?: Record<string, any>;
+}
+
+export interface ErrorDetails {
     code: string;
     context?: Record<string, unknown>;
     timestamp?: string;
+    severity?: ErrorSeverity;
 }
 
 export class IrohError extends Error {
@@ -61,18 +77,28 @@ export class ValidationError extends IrohError {
     }
 }
 
-// Helper function with proper typing
+// Improved utility functions
 export function ensureError(error: unknown): Error {
     if (error instanceof Error) return error;
     
+    if (typeof error === 'string') {
+        return new Error(error);
+    }
+    
     return new Error(
-        typeof error === 'string' 
-            ? error 
+        error === null || error === undefined
+            ? 'Unknown error occurred'
             : JSON.stringify(error, null, 2)
     );
 }
 
-// Type guard for IrohError
 export function isIrohError(error: unknown): error is IrohError {
-    return error instanceof IrohError;
+    return error instanceof IrohError && 'code' in error && 'timestamp' in error;
+}
+
+export function getErrorSeverity(error: Error): ErrorSeverity {
+    if (error instanceof HardwareError) return ErrorSeverity.HIGH;
+    if (error instanceof ServiceError) return ErrorSeverity.MEDIUM;
+    if (error instanceof IrohError) return ErrorSeverity.LOW;
+    return ErrorSeverity.MEDIUM;
 }
