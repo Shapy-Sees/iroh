@@ -65,6 +65,18 @@ export class MockDAHDIInterface extends EventEmitter {
     });
 
     public isDeviceOpen = jest.fn().mockImplementation(() => this.isOpen);
+
+    public simulateError(error: DAHDIError): void {
+        this.emit('error', error);
+    }
+
+    public simulateBufferOverflow(): void {
+        this.emit('buffer_overflow');
+    }
+
+    public simulateStatus(status: DAHDIChannelStatus): void {
+        this.emit('status_change', status);
+    }
 }
 
 // Mock FXS Interface that uses DAHDI
@@ -110,6 +122,14 @@ export class MockFXSInterface extends EventEmitter {
     public simulateRing(): void {
         this.dahdi.setRinging(1, true);
         setTimeout(() => this.dahdi.setRinging(1, false), 2000);
+    }
+
+    public simulateAudioData(buffer: AudioBuffer): void {
+        this.emit('audio', buffer);
+    }
+
+    public simulateError(error: HardwareError): void {
+        this.emit('error', error);
     }
 }
 
@@ -202,6 +222,47 @@ export function createMockConfig() {
             maxFiles: '14d',
             maxSize: '20m'
         }
+    };
+}
+
+// Test context manager
+export class TestContext {
+    private mocks: Map<string, jest.Mock> = new Map();
+    private cleanup: Array<() => Promise<void>> = [];
+
+    public registerMock(name: string, mock: jest.Mock): void {
+        this.mocks.set(name, mock);
+    }
+
+    public registerCleanup(fn: () => Promise<void>): void {
+        this.cleanup.push(fn);
+    }
+
+    public async teardown(): Promise<void> {
+        await Promise.all(this.cleanup.map(fn => fn()));
+        this.mocks.clear();
+    }
+}
+
+// Enhanced test utilities
+export function createTestHarness() {
+    const context = new TestContext();
+    const mockFXS = new MockFXSInterface();
+    const mockDTMF = new MockDTMFDetector();
+    const mockAI = new MockAIService();
+
+    context.registerCleanup(async () => {
+        mockFXS.removeAllListeners();
+        mockDTMF.removeAllListeners();
+        mockAI.removeAllListeners();
+    });
+
+    return {
+        context,
+        mockFXS,
+        mockDTMF,
+        mockAI,
+        config: createMockConfig()
     };
 }
 

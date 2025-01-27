@@ -45,8 +45,19 @@ export interface BaseLogMetadata {
     component: LogComponent;
     type: LogMetadataType;
     timestamp: string;
+    context?: LogContext;
     details?: Record<string, unknown>;
     severity?: ErrorSeverity;
+}
+
+// Add missing context types
+export interface LogContext {
+    requestId?: string;
+    sessionId?: string;
+    userId?: string;
+    environment?: string;
+    version?: string;
+    [key: string]: unknown;
 }
 
 // Specific metadata interfaces extending base
@@ -162,6 +173,11 @@ export interface LoggerConfig {
         json?: boolean;
         prettyPrint?: boolean;
     };
+    metadata?: {
+        includeHostname?: boolean;
+        includePid?: boolean;
+        environment?: string;
+    };
 }
 
 // Log entry interface
@@ -202,7 +218,11 @@ export const isDebugMetadata = (metadata: LogMetadata): metadata is DebugLogMeta
 
 // Validation helpers
 export const validateMetadata = (metadata: LogMetadata): boolean => {
-    if (!metadata.type || !metadata.component) return false;
+    if (!metadata || typeof metadata !== 'object') return false;
+    
+    if (!metadata.type || !metadata.component || !metadata.timestamp) {
+        return false;
+    }
 
     const isValidComponent = (component: string): component is LogComponent => {
         return ['hardware', 'audio', 'service', 'system', 'ai', 'state', 'phone', 'timer', 'music', 'config', 'intent'].includes(component);
@@ -210,25 +230,34 @@ export const validateMetadata = (metadata: LogMetadata): boolean => {
 
     if (!isValidComponent(metadata.component)) return false;
 
+    // Type-specific validation
     switch (metadata.type) {
         case 'error':
-            return isErrorMetadata(metadata);
+            return Boolean(
+                metadata.error?.message &&
+                metadata.error?.name &&
+                metadata.severity
+            );
         case 'hardware':
-            return isHardwareMetadata(metadata);
+            return Boolean(metadata.deviceId);
         case 'audio':
-            return isAudioMetadata(metadata);
+            return Boolean(
+                metadata.format?.sampleRate &&
+                metadata.format?.channels &&
+                metadata.format?.bitDepth
+            );
         case 'service':
-            return isServiceMetadata(metadata);
+            return Boolean(metadata.serviceId && metadata.status);
         case 'command':
-            return isCommandMetadata(metadata);
+            return Boolean(metadata.commandId && metadata.command);
         case 'state':
-            return isStateMetadata(metadata);
+            return Boolean(metadata.previousState && metadata.newState);
         case 'config':
-            return isConfigMetadata(metadata);
+            return Boolean(metadata.configType);
         case 'event':
-            return isEventMetadata(metadata);
+            return Boolean(metadata.eventType && metadata.eventId);
         case 'debug':
-            return isDebugMetadata(metadata);
+            return Boolean(metadata.debugType);
         default:
             return false;
     }

@@ -7,19 +7,47 @@
 import { LogLevel } from './logging';
 import { AudioFormat } from './hardware/audio';
 import { DAHDIConfig } from './hardware/dahdi';
+import { ErrorSeverity } from './errors';
+import { 
+  AudioConfig as HardwareAudioConfig,
+  DAHDIConfig as HardwareDAHDIConfig 
+} from './hardware';
 
-// Service status and state types
-export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
 
-export interface ServiceStatus {
+// Service interfaces
+export interface IService {
+    initialize(): Promise<void>;
+    shutdown(): Promise<void>;
+    getStatus(): IServiceStatus;
+    isHealthy(): boolean;
+}
+
+export interface IServiceStatus {
     state: ServiceState;
     isHealthy: boolean;
     lastError?: Error;
     lastUpdate?: Date;
 }
 
-// Base configuration types
-export interface BaseConfig {
+export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
+
+// Cache interfaces
+export interface CacheOptions {
+    ttl?: number;
+    namespace?: string;
+    maxSize?: number;
+    persistToDisk: boolean;
+}
+
+export interface CacheItem<T> {
+    key: string;
+    value: T;
+    expires: number;
+    namespace?: string;
+  }
+
+// Renamed base config interface to avoid conflicts
+export interface IBaseConfig {
     enabled?: boolean;
     retryAttempts?: number;
     timeout?: number;
@@ -37,22 +65,25 @@ export interface AudioConfig {
 }
 
 // Core configuration interface
+
 export interface Config {
-    app: {
-        name: string;
-        env: string;
-        port: number;
-    };
+    app: AppConfig;
     hardware: {
         audio: AudioConfig;
         dahdi: DAHDIConfig;
     };
-    logging: LogConfig;
     services: ServiceConfig;
+    logging: LogConfig;
+}
+
+export interface AppConfig {
+    name: string;
+    env: 'development' | 'production' | 'test';
+    port: number;
 }
 
 // Service-specific configs
-export interface AIConfig extends BaseConfig {
+export interface AIConfig extends IBaseConfig {
     anthropicKey: string;
     elevenLabsKey?: string;
     maxTokens?: number;
@@ -60,7 +91,7 @@ export interface AIConfig extends BaseConfig {
     voiceId?: string;
 }
 
-export interface HomeConfig extends BaseConfig {
+export interface HomeConfig extends IBaseConfig {
     url: string;
     token: string;
     entityPrefix?: string;
@@ -72,33 +103,24 @@ export interface HomeConfig extends BaseConfig {
     };
 }
 
-export interface MusicConfig extends BaseConfig {
+export interface MusicConfig extends IBaseConfig {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
     defaultVolume?: number;
 }
 
-export interface TimerConfig extends BaseConfig {
+export interface TimerConfig extends IBaseConfig {
     maxTimers: number;
     maxDuration: number;
 }
 
 // Overall service configuration
 export interface ServiceConfig {
-    app: {
-        name: string;
-        env: string;
-        port: number;
-    };
-    hardware: {
-        audio: AudioConfig;
-        dahdi: DAHDIConfig;
-    };
     ai: AIConfig;
     home: HomeConfig;
     music: MusicConfig;
-    logging: LogConfig;
-    cache: CacheOptions;
+    timer: TimerConfig;
+    hardware: HardwareDAHDIConfig;
 }
 
 // Logging configuration
@@ -109,14 +131,6 @@ export interface LogConfig {
     maxSize: string;
     console?: boolean;
     timestamps?: boolean;
-}
-
-// Cache configuration
-export interface CacheOptions {
-    ttl?: number;
-    namespace?: string;
-    maxSize?: number;
-    persistToDisk: boolean;
 }
 
 // Event types
@@ -134,8 +148,34 @@ export interface Result<T, E = Error> {
     metadata?: Record<string, unknown>;
 }
 
-// Re-export key types from other modules
-export * from './services';
+export interface IBaseConfig {
+    enabled?: boolean;
+    retryAttempts?: number;
+    timeout?: number;
+}
+
+// Status types
+export interface ServiceStatus {
+    state: ServiceState;
+    isHealthy: boolean;
+    lastError?: Error;
+    lastUpdate?: Date;
+    metrics?: {
+      uptime: number;
+      errors: number;
+      warnings: number;
+      lastChecked: Date;
+    };
+  }
+  export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
+
+// Export all errors
 export * from './errors';
 export * from './logging';
-export * from './hardware';
+
+// Re-export with renamed interfaces to avoid conflicts
+export {
+  AudioConfig as HardwareAudioConfig,
+  DAHDIConfig as HardwareDAHDIConfig,
+} from './hardware';
+

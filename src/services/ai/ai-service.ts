@@ -12,9 +12,10 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { ConversationManager } from './conversation-manager';
 import { Cache } from '../../utils/cache';
-import { IrohAIService, ServiceStatus, ServiceError } from '../../types/services';
+import { IrohAIService as IIrohAIService, ServiceStatus, ServiceError } from '../../types/services';
 import { AIConfig } from '../../types/core';
 import { Service, ServiceState } from '../../types/services';
+import { AudioBuffer } from '../../types/hardware/audio';
 
 // Define the base interface
 export interface AIService {
@@ -48,7 +49,7 @@ interface AIServiceEvents {
     error: (error: ServiceError) => void;
 }
 
-export class IrohAIService extends EventEmitter implements IrohAIService, Service {
+export class IrohAIService extends EventEmitter implements IIrohAIService, Service {
     private client: Anthropic;
     private isInitialized: boolean = false;
     public readonly config: AIConfig;
@@ -60,7 +61,7 @@ export class IrohAIService extends EventEmitter implements IrohAIService, Servic
     constructor(private config: AIServiceConfig) {
         super();
         this.serviceStatus = {
-            state: 'initializing',
+            state: 'initializing' as ServiceState,
             isHealthy: false,
             lastUpdate: new Date()
         };
@@ -109,7 +110,7 @@ export class IrohAIService extends EventEmitter implements IrohAIService, Servic
         }
     }
 
-    public async generateSpeech(text: string): Promise<Buffer> {
+    public async generateSpeech(text: string): Promise<AudioBuffer> {
         try {
             // This is a placeholder implementation
             // In a real implementation, this would integrate with ElevenLabs or another TTS service
@@ -255,7 +256,7 @@ export class IrohAIService extends EventEmitter implements IrohAIService, Servic
     }
 
     public getStatus(): ServiceStatus {
-        return this.serviceStatus;
+        return { ...this.serviceStatus };
     }
 
     public isHealthy(): boolean {

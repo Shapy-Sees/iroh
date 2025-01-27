@@ -125,14 +125,18 @@ export class Logger {
     }
 
     private enrichMetadata(level: LogLevel, metadata?: Partial<LogMetadata>): LogMetadata {
-        const baseMetadata: Partial<BaseLogMetadata> = {
+        const baseMetadata: BaseLogMetadata = {
             timestamp: new Date().toISOString(),
             component: metadata?.component || 'system',
             type: metadata?.type || 'error',
             context: {
                 nodeEnv: process.env.NODE_ENV,
+                hostname: require('os').hostname(),
+                pid: process.pid,
                 ...metadata?.context
-            }
+            },
+            details: metadata?.details,
+            severity: metadata?.severity
         };
 
         let enriched: LogMetadata;
@@ -153,7 +157,7 @@ export class Logger {
     }
 
     private enrichErrorMetadata(
-        base: Partial<BaseLogMetadata>, 
+        base: BaseLogMetadata, 
         metadata?: Partial<ErrorLogMetadata>
     ): ErrorLogMetadata {
         const error = metadata?.error instanceof Error ? {
@@ -161,15 +165,22 @@ export class Logger {
             name: metadata.error.name,
             stack: metadata.error.stack,
             code: (metadata.error as any).code
-        } : metadata?.error;
+        } : metadata?.error || {
+            message: 'Unknown error',
+            name: 'Error'
+        };
 
         return {
             ...base,
             type: 'error',
-            component: base.component || 'system',
-            error: error || { message: 'Unknown error', name: 'Error' },
-            severity: metadata?.severity || ErrorSeverity.MEDIUM
-        } as ErrorLogMetadata;
+            error,
+            severity: metadata?.severity || ErrorSeverity.MEDIUM,
+            context: {
+                ...base.context,
+                errorCode: error.code,
+                errorType: error.name
+            }
+        };
     }
 
     private enrichHardwareMetadata(

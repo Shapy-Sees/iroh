@@ -41,16 +41,20 @@ enum PhoneState {
     ERROR = 'error'
 }
 
+interface PhoneEvents {
+    'stateChange': { oldState: PhoneState; newState: PhoneState };
+    'off_hook': void;
+    'on_hook': void;
+    'dtmf': DTMFEvent;
+    'voice': VoiceEvent;
+    'error': Error;
+}
+
 // Update class to extend correctly typed EventEmitter
 export class PhoneController extends EventEmitter {
-    // Add type declarations for events
-    declare emit: {
-        (event: 'stateChange', payload: { oldState: PhoneState; newState: PhoneState }): boolean;
-        (event: 'off_hook'): boolean;
-        (event: 'on_hook'): boolean;
-        (event: 'dtmf', event: DTMFEvent): boolean;
-        (event: 'voice', event: VoiceEvent): boolean;
-    };
+    // Strongly typed event declarations
+    declare emit: <K extends keyof PhoneEvents>(event: K, payload: PhoneEvents[K]) => boolean;
+    declare on: <K extends keyof PhoneEvents>(event: K, listener: (payload: PhoneEvents[K]) => void) => this;
 
     private dahdi: DAHDIInterface;
     private dtmfDetector: DTMFDetector;
@@ -265,46 +269,61 @@ export class PhoneController extends EventEmitter {
         }
     }
 
+    private validateStateTransition(fromState: PhoneState, toState: PhoneState): boolean {
+        const allowedStates = this.stateTransitions.get(fromState);
+        return allowedStates?.has(toState) || false;
+    }
+
     private async setState(newState: PhoneState): Promise<Result<void>> {
-        // Validate state transition
-        const allowedStates = this.stateTransitions.get(this.currentState);
-        if (!allowedStates?.has(newState)) {
-            logger.error(`Invalid state transition from ${this.currentState} to ${newState}`);
-            return {
-                success: false,
-                error: new Error(`Invalid state transition: ${this.currentState} -> ${newState}`)
-            };
+        if (!this.validateStateTransition(this.currentState, newState)) {
+            const error = new Error(`Invalid state transition: ${this.currentState} -> ${newState}`);
+            await this.handleError(error, {
+                component: 'phone',
+                operation: 'setState',
+                severity: ErrorSeverity.HIGH
+            });
+            return { success: false, error };
         }
 
         const oldState = this.currentState;
         this.currentState = newState;
-        
-        logger.info('Phone state changed', {
-            from: oldState,
-            to: newState,
-            timestamp: Date.now()
-        });
 
-        // Emit state change event
         this.emit('stateChange', { oldState, newState });
 
-        // Handle state-specific actions
         try {
             switch (newState) {
-                case PhoneState.IDLE:
-                    this.commandBuffer = [];
+                case PhoneState.OFF_HOOK:
+                    await this.dahdi.stopRing();
+                    await this.feedback.playTone('dialtone');
                     break;
                 case PhoneState.ERROR:
                     await this.feedback.error();
                     break;
             }
-            return { success: true, data: undefined };
+            return { success: true };
         } catch (error) {
-            logger.error('Error during state change actions:', error);
             return {
                 success: false,
                 error: error instanceof Error ? error : new Error(String(error))
             };
+        }
+    }
+
+    private async handleError(error: Error, context: ErrorContext): Promise<void> {
+        logger.error('Phone controller error:', { error, context });
+        
+        try {
+            await this.setState(PhoneState.ERROR);
+            await this.feedback.handleError(error, context);
+            this.emit('error', error);
+        } catch (feedbackError) {
+            logger.error('Error handling feedback:', feedbackError);
+            // Fallback to basic error tone
+            await this.dahdi.generateTone({
+                frequency: 480,
+                duration: 500,
+                level: -10
+            });
         }
     }
 
@@ -372,7 +391,14 @@ export class PhoneController extends EventEmitter {
         try {
             // Validate audio format meets DAHDI requirements
             if (!this.validateAudioFormat(audioInput)) {
-                throw new Error('Invalid audio format for DAHDI');
+                throw new AudioError('Invalid audio format', {
+                    required: this.dahdiFormat,
+                    received: {
+                        sampleRate: audioInput.sampleRate,
+                        channels: audioInput.channels,
+                        bitDepth: audioInput.bitDepth
+                    }
+                });
             }
 
             // Process audio through pipeline
@@ -380,10 +406,10 @@ export class PhoneController extends EventEmitter {
             return { success: true, data: undefined };
 
         } catch (error) {
-            logger.error('Error processing audio data:', error);
-            await this.errorHandler.handleError(error, {
+            await this.handleError(error instanceof Error ? error : new Error(String(error)), {
                 component: 'audio',
-                operation: 'process'
+                operation: 'process',
+                severity: ErrorSeverity.HIGH
             });
             return {
                 success: false,

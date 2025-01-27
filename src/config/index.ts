@@ -73,21 +73,33 @@ const ConfigSchema = z.object({
             silenceThreshold: z.number().min(100).max(2000).default(500),
         }),
     }),
-    homeAssistant: z.object({
-        url: z.string().url().optional(),
-        token: z.string().optional(),
-        entityPrefix: z.string().default('iroh_'),
-        updateInterval: z.number().min(1000).default(5000),
-        retryAttempts: z.number().min(1).default(3),
-    }),
-    ai: z.object({
-        anthropicKey: z.string().optional(),
-        elevenLabsKey: z.string().optional(),
-        openAIKey: z.string().optional(),
-        maxTokens: z.number().default(1024),
-        temperature: z.number().default(0.7),
-        voiceId: z.string().default('uncle-iroh'),
-        model: z.string().optional(),
+    services: z.object({
+        ai: z.object({
+            anthropicKey: z.string().min(1),
+            elevenLabsKey: z.string().optional(),
+            maxTokens: z.number().default(1024),
+            temperature: z.number().default(0.7),
+            voiceId: z.string().optional(),
+        }),
+        home: z.object({
+            url: z.string().url(),
+            token: z.string().min(1),
+            entityPrefix: z.string().default('iroh_'),
+            updateInterval: z.number().default(5000),
+        }),
+        music: z.object({
+            spotifyClientId: z.string().optional(),
+            spotifyClientSecret: z.string().optional(),
+            defaultVolume: z.number().default(50),
+        }),
+        timer: z.object({
+            maxTimers: z.number().default(10),
+            maxDuration: z.number().default(3600),
+        }),
+        hardware: z.object({
+            bufferSize: z.number().default(1024),
+            enableEchoCancellation: z.boolean().default(true),
+        }),
     }),
     logging: z.object({
         level: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -121,52 +133,61 @@ function loadConfig(): ServiceConfig {
         }
 
         // Add environment variables
-        config = {
-            ...config,
-            hardware: {
-                ...config.hardware,
-                dahdi: {
-                    ...config.hardware?.dahdi,
-                    devicePath: process.env.DAHDI_DEVICE_PATH || config.hardware?.dahdi?.devicePath,
-                    channel: {
-                        ...config.hardware?.dahdi?.channel,
-                        number: Number(process.env.DAHDI_CHANNEL) || config.hardware?.dahdi?.channel?.number,
-                    },
-                    debug: {
-                        ...config.hardware?.dahdi?.debug,
-                        logHardware: process.env.DAHDI_DEBUG === 'true',
-                    },
+        const envConfig = {
+            app: {
+                env: process.env.NODE_ENV,
+                port: process.env.PORT ? parseInt(process.env.PORT, 10) : undefined,
+            },
+            services: {
+                ai: {
+                    anthropicKey: process.env.ANTHROPIC_API_KEY,
+                    elevenLabsKey: process.env.ELEVENLABS_API_KEY,
                 },
-            },
-            homeAssistant: {
-                ...config.homeAssistant,
-                url: process.env.HASS_URL,
-                token: process.env.HASS_TOKEN,
-            },
-            ai: {
-                ...config.ai,
-                anthropicKey: process.env.ANTHROPIC_API_KEY,
-                elevenLabsKey: process.env.ELEVENLABS_API_KEY,
-                openAIKey: process.env.OPENAI_API_KEY,
+                home: {
+                    url: process.env.HASS_URL,
+                    token: process.env.HASS_TOKEN,
+                },
+                music: {
+                    spotifyClientId: process.env.SPOTIFY_CLIENT_ID,
+                    spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET,
+                },
             },
         };
 
-        // Validate config
-        const validatedConfig = ConfigSchema.parse(config);
+        // Merge configs with proper precedence
+        const mergedConfig = deepMerge(
+            defaultConfig,
+            environmentConfig,
+            envConfig
+        );
 
-        // Log configuration summary (excluding sensitive values)
-        logger.info('Configuration loaded', {
-            env,
-            dahdiDevice: validatedConfig.hardware.dahdi.devicePath,
-            sampleRate: validatedConfig.hardware.audio.sampleRate,
-            logLevel: validatedConfig.logging.level,
-        });
+        // Validate merged config
+        const validatedConfig = ConfigSchema.parse(mergedConfig);
+
+        // Remove sensitive data before logging
+        const sanitizedConfig = sanitizeConfig(validatedConfig);
+        logger.info('Configuration loaded', sanitizedConfig);
 
         return validatedConfig;
     } catch (error) {
         logger.error('Configuration validation failed:', error);
         throw error;
     }
+}
+
+// Helper to remove sensitive data for logging
+function sanitizeConfig(config: Config): Partial<Config> {
+    const sanitized = { ...config };
+    if (sanitized.services?.ai) {
+        sanitized.services.ai = { ...sanitized.services.ai, anthropicKey: '***', elevenLabsKey: '***' };
+    }
+    if (sanitized.services?.home) {
+        sanitized.services.home = { ...sanitized.services.home, token: '***' };
+    }
+    if (sanitized.services?.music) {
+        sanitized.services.music = { ...sanitized.services.music, spotifyClientSecret: '***' };
+    }
+    return sanitized;
 }
 
 // Export typed config instance

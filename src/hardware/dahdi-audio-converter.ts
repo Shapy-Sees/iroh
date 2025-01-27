@@ -47,17 +47,15 @@ export class DAHDIAudioConverter {
     }
 
     private validateFormat(format: Partial<AudioFormat>): asserts format is DAHDIAudioFormat {
-        if (format.sampleRate !== 8000) {
-            throw new AudioFormatError('Invalid sample rate', ['Must be 8000Hz']);
-        }
-        if (format.channels !== 1) {
-            throw new AudioFormatError('Invalid channel count', ['Must be mono']);
-        }
-        if (format.bitDepth !== 16) {
-            throw new AudioFormatError('Invalid bit depth', ['Must be 16-bit']);
-        }
-        if (format.format !== 'linear') {
-            throw new AudioFormatError('Invalid format', ['Must be linear PCM']);
+        const errors: string[] = [];
+
+        if (format.sampleRate !== 8000) errors.push('Sample rate must be 8000Hz');
+        if (format.channels !== 1) errors.push('Must be mono');
+        if (format.bitDepth !== 16) errors.push('Must be 16-bit');
+        if (format.format !== 'linear') errors.push('Must be linear PCM');
+
+        if (errors.length > 0) {
+            throw new AudioFormatError('Invalid audio format', errors);
         }
     }
 
@@ -86,26 +84,22 @@ export class DAHDIAudioConverter {
     }
 
     private async convert(buffer: Buffer, sourceFormat: Partial<AudioFormat>): Promise<Buffer> {
-        if (!isValidAudioFormat(sourceFormat)) {
-            throw new AudioFormatError('Invalid source format');
+        try {
+            if (!this.isCompatibleFormat(sourceFormat)) {
+                const conversionResult = await this.performFormatConversion(buffer, sourceFormat);
+                return conversionResult;
+            }
+            return buffer;
+        } catch (error) {
+            if (error instanceof AudioFormatError) {
+                throw error;
+            }
+            throw new AudioError('Conversion failed', { 
+                cause: error,
+                sourceFormat,
+                targetFormat: this.dahdiFormat
+            });
         }
-
-        // Handle sample rate conversion
-        if (sourceFormat.sampleRate !== this.dahdiFormat.sampleRate) {
-            buffer = await this.resample(buffer, sourceFormat.sampleRate);
-        }
-
-        // Handle channel conversion
-        if (sourceFormat.channels !== this.dahdiFormat.channels) {
-            buffer = this.convertChannels(buffer, sourceFormat.channels);
-        }
-
-        // Handle bit depth conversion
-        if (sourceFormat.bitDepth !== this.dahdiFormat.bitDepth) {
-            buffer = this.convertBitDepth(buffer, sourceFormat.bitDepth);
-        }
-
-        return buffer;
     }
 
     private async resample(buffer: Buffer, sourceSampleRate: number): Promise<Buffer> {

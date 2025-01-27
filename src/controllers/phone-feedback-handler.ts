@@ -72,45 +72,35 @@ export class PhoneFeedbackHandler extends EventEmitter {
         logger.info('Phone feedback handler initialized');
     }
 
-    public async handleError(error: Error, context: ErrorContext, options: Partial<FeedbackOptions> = {}): Promise<void> {
+    public async handleError(error: Error, context: ErrorContext): Promise<void> {
         const defaultOptions: FeedbackOptions = {
             playTones: true,
             useVoice: true,
             waitForCompletion: true
         };
 
-        const feedbackOptions = { ...defaultOptions, ...options };
-
         try {
-            // Generate appropriate error message
+            const severity = this.determineSeverity(error);
             const message = await this.errorMessages.generateFeedback(error, {
-                severity: this.determineSeverity(error),
+                severity,
                 component: context.component,
                 retryCount: context.retryCount || 0,
-                isRecoverable: this.isErrorRecoverable(error)
+                isRecoverable: context.isRecoverable
             });
 
-            logger.debug('Providing error feedback', {
-                error: error.message,
-                severity: this.determineSeverity(error),
-                message
-            });
-
-            // Add feedback to queue
             await this.queueFeedback(async () => {
-                if (feedbackOptions.playTones) {
-                    await this.playErrorTone(context.severity);
+                if (defaultOptions.playTones) {
+                    await this.playErrorTone(severity);
                 }
-
-                if (feedbackOptions.useVoice) {
+                if (defaultOptions.useVoice && message) {
                     const speech = await this.aiService.generateSpeech(message);
                     await this.playAudio(speech);
                 }
-            }, feedbackOptions.waitForCompletion);
+            }, defaultOptions.waitForCompletion);
 
         } catch (feedbackError) {
             logger.error('Error providing feedback:', feedbackError);
-            // Fallback to simple tone if voice feedback fails
+            // Fallback to simple error tone
             await this.playErrorTone('high');
         }
     }
@@ -268,5 +258,14 @@ export class PhoneFeedbackHandler extends EventEmitter {
     // Add type-safe event emission
     public emit(event: FeedbackEvent, ...args: any[]): boolean {
         return super.emit(event, ...args);
+    }
+
+    private validateToneParameters(pattern: TonePattern): void {
+        if (pattern.frequency && (pattern.frequency < 300 || pattern.frequency > 3400)) {
+            throw new Error('Tone frequency out of DAHDI range (300-3400 Hz)');
+        }
+        if (pattern.level && (pattern.level < -30 || pattern.level > 0)) {
+            throw new Error('Tone level out of DAHDI range (-30 to 0 dBm0)');
+        }
     }
 }

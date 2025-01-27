@@ -13,10 +13,15 @@ export interface ErrorContext {
     component: string;
     operation: string;
     severity: ErrorSeverity;
-    retryCount?: number;
-    isRecoverable?: boolean;
+    retryCount: number;
+    isRecoverable: boolean;
     metadata?: Record<string, unknown>;
     timestamp?: Date;
+    requestId?: string;
+    sessionId?: string;
+    userId?: string;
+    environment?: string;
+    version?: string;
 }
 
 export interface ErrorDetails {
@@ -101,6 +106,9 @@ export function isIrohError(error: unknown): error is IrohError {
 export function getErrorSeverity(error: Error): ErrorSeverity {
     if (error instanceof HardwareError) return ErrorSeverity.HIGH;
     if (error instanceof ServiceError) return ErrorSeverity.MEDIUM;
+    if (error instanceof ValidationError) return ErrorSeverity.LOW;
+    if (error instanceof ConfigurationError) return ErrorSeverity.MEDIUM;
+    if (error instanceof StateError) return ErrorSeverity.MEDIUM;
     if (error instanceof IrohError) return ErrorSeverity.LOW;
     return ErrorSeverity.MEDIUM;
 }

@@ -83,8 +83,14 @@ interface AIServiceConfig extends BaseConfig {
 }
 
 export class ServiceManager extends EventEmitter {
-    private readonly services: Map<ServiceName, ServiceRegistry[ServiceName]>;
-    private state: ServiceManagerState;
+    private readonly services: Map<ServiceName, Service>;
+    private state: ServiceManagerState = {
+        isInitialized: false,
+        activeServices: new Set<ServiceName>(),
+        serviceStates: new Map<ServiceName, ServiceState>(),
+        startTime: undefined,
+        lastError: undefined
+    };
     private readonly config: Config;
     private readonly phoneController: PhoneController;
     private initPromise: Promise<void> | null = null;
@@ -97,18 +103,19 @@ export class ServiceManager extends EventEmitter {
     private hardwareService!: HardwareService;
     private intentHandler!: IntentHandler;
 
+    private readonly serviceMetadata: Map<ServiceName, ServiceMetadata> = new Map([
+        ['hardware', { name: 'hardware', dependencies: [], priority: 1 }],
+        ['ai', { name: 'ai', dependencies: ['hardware'], priority: 2 }],
+        ['home', { name: 'home', dependencies: ['hardware'], priority: 2 }],
+        ['music', { name: 'music', dependencies: ['hardware', 'ai'], priority: 3 }],
+        ['timer', { name: 'timer', dependencies: ['ai'], priority: 3 }]
+    ]);
+
     constructor(config: Config, phoneController: PhoneController) {
         super();
         this.services = new Map();
         this.config = config;
         this.phoneController = phoneController;
-        this.state = {
-            isInitialized: false,
-            activeServices: new Set(),
-            serviceStates: new Map(),
-            startTime: undefined,
-            lastError: undefined
-        };
         
         this.setupServices();
     }
@@ -152,48 +159,6 @@ export class ServiceManager extends EventEmitter {
         );
     }
 
-    private setupEventHandlers(): void {
-        // Type the event handlers properly
-        this.homeAssistant.addListener('state_changed', async (event: HAEvent) => {
-            try {
-                await this.handleStateChange(event);
-            } catch (error) {
-                errorHandler.handleError(error, {
-                    component: 'ServiceManager',
-                    operation: 'handleStateChange'
-                });
-            }
-        });
-
-        this.timerService.addListener('timerComplete', async (timerId: string) => {
-            try {
-                await this.handleTimerComplete(timerId);
-            } catch (error) {
-                errorHandler.handleError(error, {
-                    component: 'ServiceManager', 
-                    operation: 'handleTimerComplete'
-                });
-            }
-        });
-
-        // Handle hardware events
-        this.hardwareService.on('hardware_error', async (error: Error) => {
-            try {
-                await this.handleHardwareError(error);
-            } catch (error) {
-                errorHandler.handleError(error, {
-                    component: 'ServiceManager',
-                    operation: 'handleHardwareError'
-                });
-            }
-        });
-
-        // Handle intent detection results
-        this.intentHandler.on('contextUpdate', (context: any) => {
-            logger.debug('Intent context updated', { context });
-        });
-    }
-
     public async initialize(): Promise<void> {
         // Prevent multiple simultaneous initializations
         if (this.initPromise) {
@@ -209,11 +174,12 @@ export class ServiceManager extends EventEmitter {
             logger.info('Initializing services...');
             this.state.startTime = Date.now();
 
-            // Initialize in dependency order
-            const initOrder: ServiceName[] = ['hardware', 'ai', 'home', 'music', 'timer'];
+            // Sort services by dependencies and priority
+            const sortedServices = this.getInitializationOrder();
             
-            for (const serviceName of initOrder) {
+            for (const serviceName of sortedServices) {
                 await this.initializeService(serviceName);
+                this.emit('service:initialized', { serviceName });
             }
 
             await this.verifyServicesHealth();
@@ -230,15 +196,39 @@ export class ServiceManager extends EventEmitter {
         }
     }
 
+    private getInitializationOrder(): ServiceName[] {
+        const visited = new Set<ServiceName>();
+        const result: ServiceName[] = [];
+
+        const visit = (name: ServiceName) => {
+            if (visited.has(name)) return;
+            visited.add(name);
+
+            const metadata = this.serviceMetadata.get(name);
+            if (!metadata) throw new Error(`Missing metadata for service: ${name}`);
+
+            for (const dep of metadata.dependencies) {
+                visit(dep);
+            }
+            result.push(name);
+        };
+
+        // Start with services sorted by priority
+        const servicesByPriority = Array.from(this.serviceMetadata.entries())
+            .sort((a, b) => a[1].priority - b[1].priority);
+
+        for (const [name] of servicesByPriority) {
+            visit(name);
+        }
+
+        return result;
+    }
+
     private async initializeService(serviceName: ServiceName): Promise<void> {
         try {
             const service = this.getService(serviceName);
             await service.initialize();
-            
-            this.state.activeServices.add(serviceName);
             this.state.serviceStates.set(serviceName, 'ready');
-            
-            logger.info(`Initialized ${serviceName} service`);
         } catch (error) {
             this.state.serviceStates.set(serviceName, 'error');
             throw this.createServiceError(serviceName, error);
@@ -258,7 +248,7 @@ export class ServiceManager extends EventEmitter {
     }
 
     private createServiceError(serviceName: ServiceName, error: unknown): ServiceError {
-        const serviceError: ServiceError = {
+        return {
             name: 'ServiceError',
             message: error instanceof Error ? error.message : String(error),
             serviceName,
@@ -266,7 +256,6 @@ export class ServiceManager extends EventEmitter {
             timestamp: new Date(),
             stack: error instanceof Error ? error.stack : undefined
         };
-        return serviceError;
     }
 
     private async handleStateChange(event: { 
@@ -527,5 +516,59 @@ export class ServiceManager extends EventEmitter {
             temperature: this.config.ai.temperature,
             model: this.config.ai.model
         };
+    }
+
+    private setupEventHandlers(): void {
+        // Handle service events
+        for (const [name, service] of this.services) {
+            service.on('service:error', ({ error }) => {
+                this.handleError(error, name);
+            });
+
+            service.on('service:stateChanged', ({ status }) => {
+                this.state.serviceStates.set(name, status.state);
+                this.emit('stateChange', { serviceName: name, status });
+            });
+        }
+
+        // Type the event handlers properly
+        this.homeAssistant.addListener('state_changed', async (event: HAEvent) => {
+            try {
+                await this.handleStateChange(event);
+            } catch (error) {
+                errorHandler.handleError(error, {
+                    component: 'ServiceManager',
+                    operation: 'handleStateChange'
+                });
+            }
+        });
+
+        this.timerService.addListener('timerComplete', async (timerId: string) => {
+            try {
+                await this.handleTimerComplete(timerId);
+            } catch (error) {
+                errorHandler.handleError(error, {
+                    component: 'ServiceManager', 
+                    operation: 'handleTimerComplete'
+                });
+            }
+        });
+
+        // Handle hardware events
+        this.hardwareService.on('hardware_error', async (error: Error) => {
+            try {
+                await this.handleHardwareError(error);
+            } catch (error) {
+                errorHandler.handleError(error, {
+                    component: 'ServiceManager',
+                    operation: 'handleHardwareError'
+                });
+            }
+        });
+
+        // Handle intent detection results
+        this.intentHandler.on('contextUpdate', (context: any) => {
+            logger.debug('Intent context updated', { context });
+        });
     }
 }

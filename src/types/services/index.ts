@@ -8,7 +8,7 @@ import { HardwareConfig } from '../hardware';
 import { AudioBuffer } from '../hardware/audio';
 
 // Base Service interface that all services must implement
-export interface Service {
+export interface Service extends ServiceEmitter {
     initialize(): Promise<void>;
     shutdown(): Promise<void>;
     getStatus(): ServiceStatus;
@@ -75,6 +75,27 @@ export interface ServiceEvent {
     service: string;
     timestamp: Date;
     data?: any;
+}
+
+// Service events with proper typing
+export interface ServiceEventMap {
+    'service:initialized': { serviceName: ServiceName };
+    'service:error': { serviceName: ServiceName, error: ServiceError };
+    'service:stateChanged': { serviceName: ServiceName, status: ServiceStatus };
+    'service:shutdown': { serviceName: ServiceName };
+}
+
+export interface ServiceEmitter {
+    emit<K extends keyof ServiceEventMap>(event: K, payload: ServiceEventMap[K]): boolean;
+    on<K extends keyof ServiceEventMap>(event: K, handler: (payload: ServiceEventMap[K]) => void): void;
+    off<K extends keyof ServiceEventMap>(event: K, handler: (payload: ServiceEventMap[K]) => void): void;
+}
+
+// Add dependencies field to track initialization order
+export interface ServiceMetadata {
+    name: ServiceName;
+    dependencies: ServiceName[];
+    priority: number;
 }
 
 // Service registry type

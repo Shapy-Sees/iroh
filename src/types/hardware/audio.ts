@@ -6,12 +6,13 @@ import { HardwareError } from './dahdi';
 export type AudioBuffer = Buffer;
 
 export interface AudioConfig {
-    sampleRate: 8000;
-    channels: 1;
-    bitDepth: 16;
-    vadThreshold: number;
-    silenceThreshold: number;
+    sampleRate: number;
+    channels: number;
+    bitDepth: number;
+    format?: 'linear' | 'alaw' | 'ulaw';
     bufferSize?: number;
+    vadThreshold?: number;
+    silenceThreshold?: number;
 }
 
 export interface AudioInput {
