@@ -1,4 +1,7 @@
 // src/types/services/index.ts
+//
+// Consolidated service type definitions that define the core service interfaces
+// and type system for all services in the application
 
 import { BaseConfig, BaseStatus, AIConfig, HomeConfig, MusicConfig } from '../core';
 import { HardwareConfig } from '../hardware';
@@ -64,7 +67,6 @@ export interface MusicService extends Service {
     pause(): Promise<void>;
     stop(): Promise<void>;
     isPlaying(): boolean;
-    isHealthy(): boolean;
     config: MusicConfig;
 }
 
@@ -72,7 +74,7 @@ export interface TimerService extends Service {
     createTimer(duration: number): Promise<string>;
     cancelTimer(timerId: string): Promise<void>;
     getActiveTimers(): string[];
-    isHealthy(): boolean;
+    config: TimerConfig;
 }
 
 export interface HardwareService extends Service {
@@ -80,7 +82,6 @@ export interface HardwareService extends Service {
     startRecording(): Promise<void>;
     stopRecording(): Promise<void>;
     isRecording(): boolean;
-    isHealthy(): boolean;
     config: HardwareConfig;
 }
 

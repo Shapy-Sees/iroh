@@ -1,15 +1,11 @@
 // src/utils/error-messages.ts
 //
-// Centralized error message system with consistent formatting
-// and context-aware responses
+// Centralized error message system with consistent formatting 
+// and context-aware responses. Uses Uncle Iroh's wisdom
+// for human-friendly error messages.
 
-import { ErrorSeverity } from './error-handler';
-
-export interface ErrorMessage {
-    message: string;
-    suggestion: string;
-    teaMetaphor: string;
-}
+import { ErrorSeverity } from '../types/errors';
+import { logger } from './logger';
 
 export interface ErrorContext {
     severity: ErrorSeverity;
@@ -18,10 +14,17 @@ export interface ErrorContext {
     retryCount: number;
     isRecoverable: boolean;
     metadata?: Record<string, any>;
+    timestamp?: Date;
+}
+
+interface MessageTemplate {
+    message: string;
+    suggestion: string;
+    teaMetaphor: string;
 }
 
 // Message templates for different components and severities
-const ERROR_MESSAGES: Record<string, Record<ErrorSeverity, ErrorMessage[]>> = {
+const ERROR_MESSAGES: Record<string, Record<ErrorSeverity, MessageTemplate[]>> = {
     hardware: {
         [ErrorSeverity.LOW]: [
             {
@@ -87,33 +90,33 @@ const ERROR_MESSAGES: Record<string, Record<ErrorSeverity, ErrorMessage[]>> = {
             }
         ]
     },
-    ai: {
+    system: {
         [ErrorSeverity.LOW]: [
             {
-                message: "Our AI needs a moment to recalibrate, like a tea master adjusting their technique.",
-                suggestion: "Let's try again with a fresh perspective.",
-                teaMetaphor: "Even the most skilled tea master occasionally needs to refine their approach."
+                message: "A small disturbance in our harmony, like a leaf out of place.",
+                suggestion: "Let me restore the balance.",
+                teaMetaphor: "Even the most orderly tea garden has its moments of chaos."
             }
         ],
         [ErrorSeverity.MEDIUM]: [
             {
-                message: "The AI's thoughts are a bit clouded, like tea leaves that need to settle.",
-                suggestion: "Please allow a moment for clarity to return.",
-                teaMetaphor: "Just as tea leaves find their natural place, so will our solution."
+                message: "Our system's flow is disrupted, like tea leaves caught in a strainer.",
+                suggestion: "Allow me to clear the path.",
+                teaMetaphor: "Sometimes we must pause to untangle what's blocking our way."
             }
         ],
         [ErrorSeverity.HIGH]: [
             {
-                message: "Our AI requires focused attention, like a complex tea blend that's out of balance.",
-                suggestion: "We're working to restore harmony to the system.",
-                teaMetaphor: "Sometimes we must carefully adjust each element to achieve the perfect blend."
+                message: "Our garden needs tending to restore its peace.",
+                suggestion: "Please be patient while I address this disturbance.",
+                teaMetaphor: "Even the most beautiful garden requires careful maintenance."
             }
         ],
         [ErrorSeverity.CRITICAL]: [
             {
-                message: "Our AI system needs immediate attention, like a precious tea set in jeopardy.",
-                suggestion: "Please wait while we address this critical matter.",
-                teaMetaphor: "In moments of crisis, we must act with both urgency and wisdom."
+                message: "The harmony of our system has been significantly disrupted.",
+                suggestion: "We must step back and assess before proceeding.",
+                teaMetaphor: "When the teapot cracks, we must carefully gather the pieces."
             }
         ]
     }
@@ -132,22 +135,59 @@ const RECOVERY_MESSAGES = [
     }
 ];
 
-export class ErrorMessageFormatter {
-    private getMessageTemplate(context: ErrorContext): ErrorMessage {
+export class ErrorMessages {
+    public async generateFeedback(error: Error, context: ErrorContext): Promise<string> {
+        try {
+            // Generate appropriate error message
+            const template = this.getMessageTemplate(context);
+            
+            let message = template.message;
+
+            // Add context-specific information
+            if (context.retryCount > 0) {
+                message += ` (Attempt ${context.retryCount + 1})`;
+            }
+
+            // Add recovery suggestion if applicable
+            if (context.isRecoverable) {
+                message += ` ${template.suggestion}`;
+            }
+
+            // Add tea metaphor for deeper insight
+            if (context.severity === ErrorSeverity.MEDIUM || 
+                context.severity === ErrorSeverity.HIGH) {
+                message += ` ${template.teaMetaphor}`;
+            }
+
+            logger.debug('Generated error feedback', {
+                error: error.message,
+                severity: context.severity,
+                message
+            });
+
+            return message;
+
+        } catch (error) {
+            logger.error('Error generating feedback:', error);
+            return this.getGenericMessage(context);
+        }
+    }
+
+    private getMessageTemplate(context: ErrorContext): MessageTemplate {
         const componentMessages = ERROR_MESSAGES[context.component];
         if (!componentMessages) {
-            return this.getGenericMessage(context);
+            return this.getGenericTemplate(context);
         }
 
         const severityMessages = componentMessages[context.severity];
         if (!severityMessages?.length) {
-            return this.getGenericMessage(context);
+            return this.getGenericTemplate(context);
         }
 
         return severityMessages[context.retryCount % severityMessages.length];
     }
 
-    private getGenericMessage(context: ErrorContext): ErrorMessage {
+    private getGenericTemplate(context: ErrorContext): MessageTemplate {
         return {
             message: "Like an unexpected guest at tea time, we've encountered a small surprise.",
             suggestion: "Shall we try a different approach?",
@@ -155,8 +195,8 @@ export class ErrorMessageFormatter {
         };
     }
 
-    public formatErrorMessage(context: ErrorContext): string {
-        const template = this.getMessageTemplate(context);
+    private getGenericMessage(context: ErrorContext): string {
+        const template = this.getGenericTemplate(context);
         
         let message = template.message;
 
@@ -181,20 +221,18 @@ export class ErrorMessageFormatter {
 
         return success ? template.success : template.failure;
     }
+
+    public getProgressMessage(progress: number): string {
+        if (progress >= 1) {
+            return this.formatRecoveryMessage(true);
+        }
+        return this.formatRecoveryMessage(false, progress);
+    }
+
+    public handleRecovery(success: boolean): string {
+        return this.formatRecoveryMessage(success);
+    }
 }
 
 // Export singleton instance
-export const errorMessageFormatter = new ErrorMessageFormatter();
-
-// Example usage:
-/*
-const message = errorMessageFormatter.formatErrorMessage({
-    severity: ErrorSeverity.MEDIUM,
-    component: 'hardware',
-    operation: 'connect',
-    retryCount: 0,
-    isRecoverable: true
-});
-
-const recoveryMessage = errorMessageFormatter.formatRecoveryMessage(true);
-*/
+export const errorMessages = new ErrorMessages();

@@ -87,25 +87,18 @@ export class ServiceManager extends EventEmitter {
     private hardwareService!: HardwareService;
     private intentHandler!: IntentHandler;
 
-    constructor(config: Config, phoneController: PhoneController) {
+    constructor(config: ServiceConfig, phoneController: PhoneController) {
         super();
-        
-        this.config = config;
-        this.phoneController = phoneController;
         this.services = new Map();
-        
-        this.state = {
-            isInitialized: false,
-            activeServices: new Set(),
-            serviceStates: new Map(),
-        };
+        this.setupServices(config);
+    }
 
-        this.createServiceInstances();
-        this.setupEventHandlers();
-
-        logger.info('Service manager constructed', {
-            configuredServices: Array.from(this.services.keys())
-        });
+    private setupServices(config: ServiceConfig): void {
+        this.services.set('hardware', new HardwareService(config.hardware));
+        this.services.set('ai', new AIService(config.ai));
+        this.services.set('home', new HAService(config.home));
+        this.services.set('music', new MusicService(config.music));
+        this.services.set('timer', new TimerService(config));
     }
 
     private createServiceInstances(): void {

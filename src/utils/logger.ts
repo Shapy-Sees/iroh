@@ -7,20 +7,15 @@ import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
 import fs from 'fs';
+
 import { 
-    LogLevel, 
-    LogMetadata, 
-    LoggerConfig,
-    createLogMetadata,
-    validateMetadata,
-    LogEntry,
-    isErrorMetadata,
-    isHardwareMetadata,
-    isAudioMetadata,
-    isServiceMetadata,
-    isCommandMetadata,
-    isStateMetadata,
-    ErrorLogMetadata
+    LogLevel,
+    LogMetadata,
+    ErrorLogMetadata,
+    BaseLogMetadata,
+    LogComponent,
+    ErrorSeverity,
+    LogMetadataType
 } from '../types/logging';
 
 export class Logger {
