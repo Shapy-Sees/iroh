@@ -1,119 +1,44 @@
-// src/types/core.ts
-
-// Core type definitions for Project Iroh
-// Contains all shared interfaces, types, and enums used across the application
-
 import { Buffer } from 'buffer';
 
 // ===== Core Result Types =====
 
-/**
- * Generic result type for operations that can fail
- */
-export interface Result<T> {
+export interface Result<T, E = Error> {
     success: boolean;
     data?: T;
-    error?: Error;
+    error?: E;
+    metadata?: Record<string, unknown>;
 }
 
-// ===== Error Types =====
+// ===== Configuration Types =====
 
-/**
- * Error severity levels for the application
- */
-export enum ErrorSeverity {
-    LOW = 'low',
-    MEDIUM = 'medium',
-    HIGH = 'high',
-    CRITICAL = 'critical'
+export interface AppConfig {
+    name: string;
+    env: 'development' | 'production' | 'test';
+    port: number;
 }
 
-/**
- * Base error class for Iroh-specific errors
- */
-export class IrohError extends Error {
-    constructor(
-        message: string,
-        public readonly code?: string,
-        public readonly timestamp: number = Date.now()
-    ) {
-        super(message);
-        this.name = 'IrohError';
-    }
+export interface HardwareConfig {
+    dahdi: {
+        device: string;
+        span: number;
+        channel: number;
+        loadzone: string;
+        defaultzone: string;
+        echocancel: boolean;
+        echocanceltaps: number;
+        bufferSize: number;
+        ringTimeout: number;
+        dtmfTimeout: number;
+    };
+    audio: {
+        sampleRate: 8000;
+        channels: 1;
+        bitDepth: 16;
+        vadThreshold: number;
+        silenceThreshold: number;
+    };
 }
 
-// ===== Hardware Types =====
-
-/**
- * Configuration for FXS (Foreign Exchange Station) hardware
- */
-export interface FXSConfig {
-    devicePath: string;
-    sampleRate: number;
-    impedance: number;
-    channel: number;
-}
-
-/**
- * Audio format specification
- */
-export interface AudioFormat {
-    sampleRate: number;
-    channels: number;
-    bitDepth: number;
-    format?: 'linear' | 'alaw' | 'ulaw';
-}
-
-/**
- * Audio input data structure
- */
-export interface AudioInput {
-    data: Buffer;
-    sampleRate: number;
-    channels: number;
-    bitDepth: number;
-    timestamp?: number;
-}
-
-// ===== Controller Types =====
-
-/**
- * Phone controller states
- */
-export enum PhoneState {
-    IDLE = 'idle',
-    OFF_HOOK = 'off_hook',
-    RINGING = 'ringing',
-    IN_CALL = 'in_call',
-    ERROR = 'error'
-}
-
-/**
- * DTMF event data
- */
-export interface DTMFEvent {
-    digit: string;
-    duration: number;
-    timestamp: number;
-    power?: number;
-}
-
-/**
- * Voice event data
- */
-export interface VoiceEvent {
-    startTime: number;
-    endTime: number;
-    isFinal: boolean;
-    audio?: Buffer;
-    confidence?: number;
-}
-
-// ===== Service Types =====
-
-/**
- * AI service configuration
- */
 export interface AIConfig {
     anthropicKey: string;
     elevenLabsKey: string;
@@ -121,19 +46,14 @@ export interface AIConfig {
     maxTokens: number;
     temperature: number;
     voiceId: string;
+    model?: string;
 }
 
-/**
- * Music service configuration
- */
 export interface MusicConfig {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
 }
 
-/**
- * Home automation configuration
- */
 export interface HomeConfig {
     homekitBridge: {
         pin: string;
@@ -142,62 +62,53 @@ export interface HomeConfig {
     };
 }
 
-/**
- * Logging configuration
- */
 export interface LogConfig {
-    level: 'error' | 'warn' | 'info' | 'debug';
-    path: string;
+    level: 'debug' | 'info' | 'warn' | 'error';
+    directory: string;
+    maxFiles: string;
     maxSize: string;
-    maxFiles: number;
 }
 
-/**
- * Application configuration
- */
-export interface AppConfig {
-    name: string;
-    version: string;
-    environment: 'development' | 'production' | 'test';
-}
-
-/**
- * Complete configuration type
- */
-export interface Config {
+export interface ServiceConfig {
     app: AppConfig;
-    audio: {
-        bufferSize: number;
-        vadThreshold: number;
-    };
+    hardware: HardwareConfig;
     ai: AIConfig;
     music: MusicConfig;
     home: HomeConfig;
     logging: LogConfig;
 }
 
+// ===== Hardware States =====
+
+export enum HardwareState {
+    INITIALIZING = 'initializing',
+    READY = 'ready',
+    ERROR = 'error',
+    OFFLINE = 'offline'
+}
+
+export enum PhoneState {
+    IDLE = 'idle',
+    OFF_HOOK = 'off_hook',
+    RINGING = 'ringing',
+    IN_CALL = 'in_call',
+    ERROR = 'error'
+}
+
 // ===== Event Types =====
 
-/**
- * Base event interface
- */
 export interface BaseEvent {
     type: string;
     timestamp: number;
+    metadata?: Record<string, unknown>;
 }
 
-/**
- * Hardware event interface
- */
 export interface HardwareEvent extends BaseEvent {
     type: 'hardware';
-    status: 'online' | 'offline' | 'error';
+    status: HardwareState;
     details?: Record<string, unknown>;
 }
 
-/**
- * Service event interface
- */
 export interface ServiceEvent extends BaseEvent {
     type: 'service';
     service: string;
@@ -205,26 +116,10 @@ export interface ServiceEvent extends BaseEvent {
     details?: Record<string, unknown>;
 }
 
-/**
- * Diagnostic result interface
- */
-export interface DiagnosticResult {
-    test: string;
-    passed: boolean;
-    message?: string;
-    details?: Record<string, unknown>;
-}
-
 // ===== Command Types =====
 
-/**
- * Command status type
- */
 export type CommandStatus = 'pending' | 'running' | 'completed' | 'failed';
 
-/**
- * Base command interface
- */
 export interface Command {
     type: string;
     id: string;
@@ -233,12 +128,25 @@ export interface Command {
     metadata?: Record<string, unknown>;
 }
 
-/**
- * Command result interface
- */
-export interface CommandResult<T> {
+export interface CommandResult<T> extends Result<T> {
     command: Command;
-    result?: T;
-    error?: Error;
     duration: number;
 }
+
+// ===== Diagnostic Types =====
+
+export interface DiagnosticResult {
+    test: string;
+    passed: boolean;
+    message?: string;
+    details?: Record<string, unknown>;
+    timestamp?: number;
+}
+
+// Export all error types from errors.ts
+export * from './errors';
+
+// Export hardware-specific types
+export * from './hardware/audio';
+export * from './hardware/dahdi';
+export * from './hardware/fxs';

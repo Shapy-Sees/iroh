@@ -4,6 +4,28 @@
 // Contains all the core types needed for DAHDI hardware interaction
 
 import { Buffer } from 'buffer';
+import { AudioInput } from './audio';
+
+// Base hardware error class
+export class HardwareError extends Error {
+    constructor(message: string, public details?: Record<string, any>) {
+        super(message);
+        this.name = 'HardwareError';
+    }
+}
+
+export class DAHDIError extends HardwareError {
+    constructor(message: string, details?: Record<string, any>) {
+        super(message, { ...details, source: 'DAHDI' });
+    }
+}
+
+export class DAHDIFormatError extends HardwareError {
+    constructor(message: string, public details: string[]) {
+        super(message);
+        this.name = 'DAHDIFormatError';
+    }
+}
 
 // Core DAHDI configuration interface
 export interface DAHDIConfig {
@@ -124,15 +146,6 @@ export enum DAHDIIOCtl {
     EC_DISABLE = 0x40045708
 }
 
-/**
- * DAHDI-specific hardware errors
- */
-export class DAHDIError extends HardwareError {
-    constructor(message: string, details?: Record<string, any>) {
-        super(message, { ...details, source: 'DAHDI' });
-    }
-}
-
 // Types for events
 export interface DAHDIEvents {
     'ready': void;
@@ -144,24 +157,8 @@ export interface DAHDIEvents {
     'dtmf': { digit: string; duration: number };
 }
 
-// Audio input format
-export interface AudioInput {
-    sampleRate: number;
-    channels: number;
-    bitDepth: number;
-    data: Buffer;
-}
-
 // Add AudioConverterOptions
 export interface AudioConverterOptions {
     bufferSize?: number;
     format?: Partial<DAHDIAudioFormat>;
-}
-
-// Add error class
-export class DAHDIFormatError extends HardwareError {
-    constructor(message: string, public details: string[]) {
-        super(message);
-        this.name = 'DAHDIFormatError';
-    }
 }

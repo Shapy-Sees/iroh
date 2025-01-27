@@ -4,9 +4,11 @@ export interface MusicConfig {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
     appleMusicKey?: string;
+    provider?: 'spotify' | 'appleMusic' | 'local';
 }
 
 export interface MusicService {
+    initialize(): Promise<void>;
     executeCommand(command: string): Promise<void>;
     play(query: string): Promise<void>;
     pause(): Promise<void>;
@@ -14,6 +16,7 @@ export interface MusicService {
     previous(): Promise<void>;
     setVolume(level: number): Promise<void>;
     getStatus(): Promise<MusicStatus>;
+    shutdown(): Promise<void>;
 }
 
 export interface MusicStatus {
@@ -23,9 +26,12 @@ export interface MusicStatus {
         artist: string;
         duration: number;
         position?: number;
+        album?: string;
+        artworkUrl?: string;
     };
     volume: number;
-    queue: number;
-    repeat?: 'off' | 'track' | 'queue';
-    shuffle?: boolean;
+    queueLength: number;
+    repeat: 'off' | 'track' | 'queue';
+    shuffle: boolean;
+    provider: string;
 }

@@ -1,104 +1,88 @@
-// src/types/logging.ts
-//
-// Defines the core logging types used throughout the application
-// Provides type-safe logging with comprehensive metadata support
+import { ErrorSeverity } from './errors';
 
-/** Available log levels */
-export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
-
-/** Base interface for log metadata */
+// Base metadata interface with required fields
 export interface BaseLogMetadata {
-    /** Module or component generating the log */
-    component?: string;
-    /** Operation being performed */
-    operation?: string;
-    /** Timestamp of the log entry */
+    component: string;
     timestamp?: string;
-    /** Additional contextual data */
     context?: Record<string, unknown>;
+    operation?: string;
+    severity?: ErrorSeverity;
 }
 
-/** Error-specific metadata */
+// Specific metadata interfaces extending base
 export interface ErrorLogMetadata extends BaseLogMetadata {
-    /** Error information */
-    error?: {
+    type: 'error';
+    error: {
         message: string;
         name: string;
-        stack?: string;
         code?: string;
+        stack?: string;
     };
 }
 
-/** Hardware-specific metadata */
 export interface HardwareLogMetadata extends BaseLogMetadata {
-    deviceId?: string;
+    type: 'hardware';
+    deviceId: string;
     channelNumber?: number;
-    voltage?: number;
-    signal?: number;
-    bufferSize?: number;
-    sampleRate?: number;
+    status?: string;
+    metrics?: {
+        voltage?: number;
+        signal?: number;
+        bufferSize?: number;
+        sampleRate?: number;
+    };
 }
 
-/** Audio-specific metadata */
 export interface AudioLogMetadata extends BaseLogMetadata {
-    duration?: number;
-    format?: {
+    type: 'audio';
+    format: {
         sampleRate: number;
         channels: number;
         bitDepth: number;
     };
-    bufferSize?: number;
+    duration?: number;
     level?: number;
 }
 
-/** Service-specific metadata */
 export interface ServiceLogMetadata extends BaseLogMetadata {
-    serviceId?: string;
-    status?: string;
+    type: 'service';
+    serviceId: string;
+    status: string;
     metrics?: Record<string, number>;
-    config?: Record<string, unknown>;
 }
 
-/** Command-specific metadata */
 export interface CommandLogMetadata extends BaseLogMetadata {
-    commandId?: string;
-    command?: string;
-    parameters?: Record<string, unknown>;
+    type: 'command';
+    commandId: string;
+    command: string;
     duration?: number;
+    parameters?: Record<string, unknown>;
 }
 
-/** State change metadata */
 export interface StateLogMetadata extends BaseLogMetadata {
-    previousState?: string;
-    newState?: string;
+    type: 'state';
+    previousState: string;
+    newState: string;
     stateData?: Record<string, unknown>;
 }
 
-/** Combined log metadata type */
-export type LogMetadata = 
-    | BaseLogMetadata 
-    | ErrorLogMetadata 
-    | HardwareLogMetadata 
-    | AudioLogMetadata 
-    | ServiceLogMetadata 
-    | CommandLogMetadata 
+// Combined type for all possible metadata
+export type LogMetadata =
+    | ErrorLogMetadata
+    | HardwareLogMetadata
+    | AudioLogMetadata
+    | ServiceLogMetadata
+    | CommandLogMetadata
     | StateLogMetadata;
 
-/** Configuration for the logging system */
+// Configuration interface
 export interface LoggerConfig {
-    /** Minimum log level to record */
     level: LogLevel;
-    /** Directory to store log files */
     directory: string;
-    /** Maximum number of files to keep */
     maxFiles: string;
-    /** Maximum size per log file */
     maxSize: string;
-    /** Whether to log to console */
     console?: boolean;
-    /** Whether to include timestamps */
     timestamps?: boolean;
-    /** Additional formatting options */
     format?: {
         colors?: boolean;
         json?: boolean;
@@ -106,44 +90,51 @@ export interface LoggerConfig {
     };
 }
 
-/** Interface for log entries */
+// Log entry interface
 export interface LogEntry {
-    /** Log level */
     level: LogLevel;
-    /** Log message */
     message: string;
-    /** Timestamp of the log entry */
     timestamp: string;
-    /** Associated metadata */
-    metadata?: LogMetadata;
+    metadata: LogMetadata;
 }
 
-/** Type guard to check if metadata contains error information */
-export function isErrorMetadata(metadata: LogMetadata): metadata is ErrorLogMetadata {
-    return 'error' in metadata;
-}
+// Type guards with discriminated unions
+export const isErrorMetadata = (metadata: LogMetadata): metadata is ErrorLogMetadata =>
+    metadata.type === 'error' && 'error' in metadata;
 
-/** Type guard to check if metadata is hardware related */
-export function isHardwareMetadata(metadata: LogMetadata): metadata is HardwareLogMetadata {
-    return 'deviceId' in metadata || 'channelNumber' in metadata;
-}
+export const isHardwareMetadata = (metadata: LogMetadata): metadata is HardwareLogMetadata =>
+    metadata.type === 'hardware' && 'deviceId' in metadata;
 
-/** Type guard to check if metadata is audio related */
-export function isAudioMetadata(metadata: LogMetadata): metadata is AudioLogMetadata {
-    return 'format' in metadata || 'bufferSize' in metadata;
-}
+export const isAudioMetadata = (metadata: LogMetadata): metadata is AudioLogMetadata =>
+    metadata.type === 'audio' && 'format' in metadata;
 
-/** Type guard to check if metadata is service related */
-export function isServiceMetadata(metadata: LogMetadata): metadata is ServiceLogMetadata {
-    return 'serviceId' in metadata || 'metrics' in metadata;
-}
+export const isServiceMetadata = (metadata: LogMetadata): metadata is ServiceLogMetadata =>
+    metadata.type === 'service' && 'serviceId' in metadata;
 
-/** Type guard to check if metadata is command related */
-export function isCommandMetadata(metadata: LogMetadata): metadata is CommandLogMetadata {
-    return 'commandId' in metadata || 'command' in metadata;
-}
+export const isCommandMetadata = (metadata: LogMetadata): metadata is CommandLogMetadata =>
+    metadata.type === 'command' && 'commandId' in metadata;
 
-/** Type guard to check if metadata is state related */
-export function isStateMetadata(metadata: LogMetadata): metadata is StateLogMetadata {
-    return 'previousState' in metadata || 'newState' in metadata;
-}
+export const isStateMetadata = (metadata: LogMetadata): metadata is StateLogMetadata =>
+    metadata.type === 'state' && 'previousState' in metadata && 'newState' in metadata;
+
+// Validation helpers
+export const validateMetadata = (metadata: LogMetadata): boolean => {
+    if (!metadata.type || !metadata.component) return false;
+
+    switch (metadata.type) {
+        case 'error':
+            return isErrorMetadata(metadata);
+        case 'hardware':
+            return isHardwareMetadata(metadata);
+        case 'audio':
+            return isAudioMetadata(metadata);
+        case 'service':
+            return isServiceMetadata(metadata);
+        case 'command':
+            return isCommandMetadata(metadata);
+        case 'state':
+            return isStateMetadata(metadata);
+        default:
+            return false;
+    }
+};

@@ -11,11 +11,13 @@ import { AudioBuffer } from 'audiobuffer-to-wav';
 import { logger } from '../utils/logger';
 import { 
     DAHDIAudioFormat, 
-    AudioFormatError,
-    AudioInput 
+    DAHDIError,
+    HardwareError 
 } from '../types/hardware/dahdi';
-import { AudioError } from '../types/hardware/audio';
-import { DAHDIError } from '../types/hardware/dahdi';
+import {
+    AudioError,
+    AudioFormatError
+} from '../types/hardware/audio';
 
 interface AudioConverterOptions {
     /** Buffer size for processing */
@@ -23,10 +25,6 @@ interface AudioConverterOptions {
     /** Whether to use worker threads for conversion */
     useWorkers?: boolean;
 }
-
-import { AudioError, AudioFormatError } from '../types/hardware/audio';
-import { DAHDIAudioFormat } from '../types/hardware/dahdi';
-import { logger } from '../utils/logger';
 
 interface ConverterConfig {
     quality: 'best' | 'medium' | 'fast';

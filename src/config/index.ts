@@ -10,36 +10,38 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger';
-import { ConfigurationError } from '../types/core';
+import { ConfigurationError, ServiceConfig } from '../types/core';
 
 // Load environment variables
 dotenv.config();
 
-// Configuration schema with DAHDI and Home Assistant support
+// Configuration schema with type validation
 const ConfigSchema = z.object({
     app: z.object({
         name: z.string().default('iroh'),
         env: z.enum(['development', 'production', 'test']).default('development'),
         port: z.number().default(3000),
     }),
-    dahdi: z.object({
-        device: z.string().default('/dev/dahdi/channel001'),
-        span: z.number().default(1),
-        channel: z.number().default(1),
-        loadzone: z.string().default('us'),
-        defaultzone: z.string().default('us'),
-        echocancel: z.boolean().default(true),
-        echocanceltaps: z.number().min(32).max(1024).default(128),
-        bufferSize: z.number().default(320), // 20ms at 8kHz/16-bit
-        ringTimeout: z.number().default(2000), // Ring timeout in ms
-        dtmfTimeout: z.number().default(40), // DTMF detection minimum duration
-    }),
-    audio: z.object({
-        sampleRate: z.literal(8000), // DAHDI requires 8kHz
-        channels: z.literal(1),      // DAHDI uses mono
-        bitDepth: z.literal(16),     // DAHDI uses 16-bit PCM
-        vadThreshold: z.number().min(0).max(1).default(0.3),
-        silenceThreshold: z.number().min(100).max(2000).default(500),
+    hardware: z.object({
+        dahdi: z.object({
+            device: z.string().default('/dev/dahdi/channel001'),
+            span: z.number().default(1),
+            channel: z.number().default(1),
+            loadzone: z.string().default('us'),
+            defaultzone: z.string().default('us'),
+            echocancel: z.boolean().default(true),
+            echocanceltaps: z.number().min(32).max(1024).default(128),
+            bufferSize: z.number().default(320), // 20ms at 8kHz/16-bit
+            ringTimeout: z.number().default(2000), // Ring timeout in ms
+            dtmfTimeout: z.number().default(40), // DTMF detection minimum duration
+        }),
+        audio: z.object({
+            sampleRate: z.literal(8000), // DAHDI requires 8kHz
+            channels: z.literal(1),      // DAHDI uses mono
+            bitDepth: z.literal(16),     // DAHDI uses 16-bit PCM
+            vadThreshold: z.number().min(0).max(1).default(0.3),
+            silenceThreshold: z.number().min(100).max(2000).default(500),
+        }),
     }),
     homeAssistant: z.object({
         url: z.string().url().optional(),
@@ -55,6 +57,7 @@ const ConfigSchema = z.object({
         maxTokens: z.number().default(1024),
         temperature: z.number().default(0.7),
         voiceId: z.string().default('uncle-iroh'),
+        model: z.string().optional(),
     }),
     logging: z.object({
         level: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -67,7 +70,7 @@ const ConfigSchema = z.object({
 // Type inference from schema
 type Config = z.infer<typeof ConfigSchema>;
 
-function loadConfig(): Config {
+function loadConfig(): ServiceConfig {
     const env = process.env.NODE_ENV || 'development';
     const configDir = path.resolve(process.cwd(), 'config');
 
@@ -114,8 +117,8 @@ function loadConfig(): Config {
         // Log configuration summary (excluding sensitive values)
         logger.info('Configuration loaded', {
             env,
-            dahdiDevice: validatedConfig.dahdi.device,
-            sampleRate: validatedConfig.audio.sampleRate,
+            dahdiDevice: validatedConfig.hardware.dahdi.device,
+            sampleRate: validatedConfig.hardware.audio.sampleRate,
             logLevel: validatedConfig.logging.level,
         });
 
@@ -126,5 +129,5 @@ function loadConfig(): Config {
     }
 }
 
-// Export singleton instance
-export const config = loadConfig();
+// Export typed config instance
+export const config: ServiceConfig = loadConfig();

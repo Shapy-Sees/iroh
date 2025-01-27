@@ -5,30 +5,16 @@
 // compatibility with DAHDI requirements
 
 import { DAHDIConfig, DAHDIChannelConfig } from './dahdi';
+import { AudioConfig } from './audio';
 
 export interface FXSConfig {
     /** DAHDI device configuration */
-    fxs: {
-        /** Path to DAHDI device */
-        devicePath: string;
-        /** Fixed sample rate for DAHDI (8000 Hz) */
-        sampleRate: 8000;
+    fxs: Omit<DAHDIConfig, 'controlPath'> & {
         /** Optional line impedance (600Ω or 900Ω) */
         impedance?: number;
-        /** Channel number */
-        channel?: number;
     };
     /** Audio processing configuration */
-    audio: {
-        /** Buffer size in bytes */
-        bufferSize: number;
-        /** Fixed mono channel count */
-        channels: 1;
-        /** Fixed 16-bit depth */
-        bitDepth: 16;
-        /** Voice activity detection threshold */
-        vadThreshold?: number;
-    };
+    audio: AudioConfig;
     /** AI service configuration */
     ai?: {
         /** AI model identifier */

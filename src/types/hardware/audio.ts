@@ -1,6 +1,7 @@
 // src/types/hardware/audio.ts
 
 import { Buffer } from 'buffer';
+import { HardwareError } from './dahdi';
 
 export interface AudioConfig {
     sampleRate: 8000;

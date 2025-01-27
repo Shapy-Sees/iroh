@@ -10,27 +10,43 @@ export interface ServiceConfig {
     music: MusicConfig;
 }
 
-// Common service interfaces moved from core.ts
-export interface AudioConfig {
+// Service status interface
+export interface ServiceStatus {
+    isHealthy: boolean;
+    state: string;
+    lastError?: Error;
+    metadata?: Record<string, any>;
+}
+
+// Base config interface
+export interface BaseServiceConfig {
+    enabled: boolean;
+    retryAttempts?: number;
+    timeout?: number;
+}
+
+// Refined service configs
+export interface AudioConfig extends BaseServiceConfig {
     sampleRate: number;
     channels: number;
     bitDepth: number;
     bufferSize: number;
 }
 
-export interface AIServiceConfig {
+export interface AIServiceConfig extends BaseServiceConfig {
     model: string;
     apiKey: string;
     maxTokens?: number;
+    temperature?: number;
 }
 
-export interface MusicServiceConfig {
+export interface MusicServiceConfig extends BaseServiceConfig {
     provider: 'spotify' | 'local';
     apiKey?: string;
     directory?: string;
 }
 
-export interface HomeServiceConfig {
+export interface HomeServiceConfig extends BaseServiceConfig {
     url: string;
     token: string;
     entityPrefix?: string;
