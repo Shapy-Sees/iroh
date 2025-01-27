@@ -24,16 +24,40 @@ const ConfigSchema = z.object({
     }),
     hardware: z.object({
         dahdi: z.object({
-            device: z.string().default('/dev/dahdi/channel001'),
-            span: z.number().default(1),
-            channel: z.number().default(1),
-            loadzone: z.string().default('us'),
-            defaultzone: z.string().default('us'),
-            echocancel: z.boolean().default(true),
-            echocanceltaps: z.number().min(32).max(1024).default(128),
-            bufferSize: z.number().default(320), // 20ms at 8kHz/16-bit
-            ringTimeout: z.number().default(2000), // Ring timeout in ms
-            dtmfTimeout: z.number().default(40), // DTMF detection minimum duration
+            devicePath: z.string().default('/dev/dahdi/channel001'),
+            sampleRate: z.literal(8000),
+            channel: z.object({
+                number: z.number().min(1).default(1),
+                ringCadence: z.tuple([z.number(), z.number()]).default([2000, 4000]),
+                callerIdFormat: z.enum(['bell', 'v23', 'dtmf']).default('bell'),
+                impedance: z.union([z.literal(600), z.literal(900)]).default(600),
+                gain: z.object({
+                    rx: z.number().default(0),
+                    tx: z.number().default(0),
+                }),
+            }),
+            audio: z.object({
+                echoCancellation: z.object({
+                    enabled: z.boolean().default(true),
+                    taps: z.number().min(32).max(1024).default(128),
+                    nlp: z.boolean().default(true),
+                }),
+                gainControl: z.object({
+                    enabled: z.boolean().default(true),
+                    targetLevel: z.number().default(-15),
+                    maxGain: z.number().default(12),
+                }),
+                dtmfDetection: z.object({
+                    useHardware: z.boolean().default(true),
+                    minDuration: z.number().default(40),
+                    threshold: z.number().default(0.25),
+                }),
+            }),
+            debug: z.object({
+                logHardware: z.boolean().default(false),
+                logAudio: z.boolean().default(false),
+                traceDahdi: z.boolean().default(false),
+            }).default({}),
         }),
         audio: z.object({
             sampleRate: z.literal(8000), // DAHDI requires 8kHz
@@ -92,11 +116,20 @@ function loadConfig(): ServiceConfig {
         // Add environment variables
         config = {
             ...config,
-            dahdi: {
-                ...config.dahdi,
-                device: process.env.DAHDI_DEVICE || config.dahdi?.device,
-                span: Number(process.env.DAHDI_SPAN) || config.dahdi?.span,
-                channel: Number(process.env.DAHDI_CHANNEL) || config.dahdi?.channel,
+            hardware: {
+                ...config.hardware,
+                dahdi: {
+                    ...config.hardware?.dahdi,
+                    devicePath: process.env.DAHDI_DEVICE_PATH || config.hardware?.dahdi?.devicePath,
+                    channel: {
+                        ...config.hardware?.dahdi?.channel,
+                        number: Number(process.env.DAHDI_CHANNEL) || config.hardware?.dahdi?.channel?.number,
+                    },
+                    debug: {
+                        ...config.hardware?.dahdi?.debug,
+                        logHardware: process.env.DAHDI_DEBUG === 'true',
+                    },
+                },
             },
             homeAssistant: {
                 ...config.homeAssistant,
@@ -117,7 +150,7 @@ function loadConfig(): ServiceConfig {
         // Log configuration summary (excluding sensitive values)
         logger.info('Configuration loaded', {
             env,
-            dahdiDevice: validatedConfig.hardware.dahdi.device,
+            dahdiDevice: validatedConfig.hardware.dahdi.devicePath,
             sampleRate: validatedConfig.hardware.audio.sampleRate,
             logLevel: validatedConfig.logging.level,
         });

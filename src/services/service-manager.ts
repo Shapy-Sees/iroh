@@ -11,6 +11,14 @@
 // inter-service communication, and manages graceful shutdown.
 
 import { EventEmitter } from 'node:events';
+import { 
+    Service,
+    ServiceRegistry,
+    ServiceName,
+    ServiceState,
+    ServiceStatus,
+    ServiceError 
+} from '../types/services';
 import { IrohAIService } from './ai/ai-service';
 import { HAService } from './home/ha_service';
 import { MusicService } from './music/music-service';
@@ -18,7 +26,6 @@ import { TimerService } from './timer/timer-service';
 import { HardwareService } from './hardware/hardware-service';
 import { IntentHandler } from './intent/intent-handler';
 import { Config, ServiceError } from '../types/core';
-import type { ServiceStatus } from '../types/service';
 import type { AudioBuffer } from '../types/hardware/audio';
 import type { HAEvent } from '../types/service/home';
 import { logger } from '../utils/logger';
@@ -27,17 +34,12 @@ import { errorHandler } from '../utils/error-handler';
 import { Config, AIConfig, HAConfig } from '../types';
 import { DAHDIConfig } from '../types/hardware/dahdi';
 
-interface ServiceState {
+interface ServiceManagerState {
     isInitialized: boolean;
-    activeServices: string[];
-    lastError?: Error;
+    activeServices: Set<ServiceName>;
+    serviceStates: Map<ServiceName, ServiceState>;
     startTime?: number;
-}
-
-interface ServiceManagerEvents {
-    'initialized': () => void;
-    'response': (audio: AudioBuffer) => void;
-    'error': (error: Error) => void;
+    lastError?: ServiceError;
 }
 
 export interface ServiceManager {
@@ -47,8 +49,8 @@ export interface ServiceManager {
 }
 
 export class ServiceManager extends EventEmitter {
-    private readonly services: Map<string, any>;
-    private state: ServiceState;
+    private readonly services: Map<ServiceName, Service>;
+    private state: ServiceManagerState;
     private readonly config: Config;
     private readonly phoneController: PhoneController;
     private initPromise: Promise<void> | null = null;
@@ -68,65 +70,48 @@ export class ServiceManager extends EventEmitter {
         this.phoneController = phoneController;
         this.services = new Map();
         
-        // Initialize state
         this.state = {
             isInitialized: false,
-            activeServices: [],
+            activeServices: new Set(),
+            serviceStates: new Map(),
         };
 
-        // Create service instances
         this.createServiceInstances();
-        
-        // Set up core event handlers
         this.setupEventHandlers();
 
         logger.info('Service manager constructed', {
-            configuredServices: Object.keys(config)
+            configuredServices: Array.from(this.services.keys())
         });
     }
 
     private createServiceInstances(): void {
-        // Create core services in dependency order
-        const dahdiConfig: DAHDIConfig = {
-            devicePath: this.config.hardware.dahdi.devicePath,
-            controlPath: this.config.hardware.dahdi.controlPath,
-            sampleRate: 8000,
-            channels: 1,
-            bitDepth: 16,
-            bufferSize: this.config.audio.bufferSize,
-            channel: this.config.hardware.dahdi.channel // Add required channel property
-        };
-        
-        this.hardwareService = new HardwareService(dahdiConfig);
-        this.services.set('hardware', this.hardwareService);
-
-        // Create AI service with proper config type
-        const aiServiceConfig = {
-            anthropicKey: this.config.ai.anthropicKey,
-            elevenLabsKey: this.config.ai.elevenLabsKey,
-            maxTokens: this.config.ai.maxTokens,
-            temperature: this.config.ai.temperature,
-            model: this.config.ai.model
-        };
-        
-        this.aiService = new IrohAIService(aiServiceConfig);
-        this.services.set('ai', this.aiService);
-
-        this.homeAssistant = new HAService(this.config.home);
-        this.services.set('home', this.homeAssistant);
-
-        this.musicService = new MusicService(this.config.music);
-        this.services.set('music', this.musicService);
-
-        this.timerService = new TimerService(
+        // Create services with type safety
+        this.createService('hardware', () => new HardwareService(this.getDahdiConfig()));
+        this.createService('ai', () => new IrohAIService(this.getAIConfig()));
+        this.createService('home', () => new HAService(this.config.home));
+        this.createService('music', () => new MusicService(this.config.music));
+        this.createService('timer', () => new TimerService(
             { maxTimers: 5, maxDuration: 180 },
             this.phoneController,
-            this.aiService
-        );
-        this.services.set('timer', this.timerService);
+            this.getService('ai')
+        ));
+    }
 
-        this.intentHandler = new IntentHandler();
-        this.services.set('intent', this.intentHandler);
+    private createService<T extends ServiceName>(
+        name: T,
+        factory: () => ServiceRegistry[T]
+    ): void {
+        const service = factory();
+        this.services.set(name, service);
+        this.state.serviceStates.set(name, 'initializing');
+    }
+
+    public getService<T extends ServiceName>(name: T): ServiceRegistry[T] {
+        const service = this.services.get(name);
+        if (!service) {
+            throw new Error(`Service ${name} not found`);
+        }
+        return service as ServiceRegistry[T];
     }
 
     private setupEventHandlers(): void {
@@ -198,7 +183,7 @@ export class ServiceManager extends EventEmitter {
             this.emit('initialized');
             
             logger.info('Services initialized successfully', {
-                activeServices: this.state.activeServices,
+                activeServices: Array.from(this.state.activeServices),
                 initTime: Date.now() - this.state.startTime
             });
 
@@ -213,39 +198,34 @@ export class ServiceManager extends EventEmitter {
     }
 
     private async initializeServices(): Promise<void> {
-        try {
-            // 1. Initialize hardware first
-            logger.info('Initializing hardware service...');
-            await this.hardwareService.initialize();
-            this.state.activeServices.push('hardware');
+        const initOrder: ServiceName[] = ['hardware', 'ai', 'home', 'music', 'timer'];
 
-            // 2. Initialize remaining services in parallel
-            logger.info('Initializing core services...');
-            await Promise.all([
-                this.initializeService('ai', this.aiService),
-                this.initializeService('home', this.homeAssistant),
-                this.initializeService('music', this.musicService),
-                this.initializeService('timer', this.timerService)
-            ]);
-
-            logger.info('All services initialized successfully');
-
-        } catch (error) {
-            logger.error('Service initialization failed:', error);
-            await this.stopServices();
-            throw error;
+        for (const serviceName of initOrder) {
+            try {
+                const service = this.getService(serviceName);
+                await service.initialize();
+                
+                this.state.activeServices.add(serviceName);
+                this.state.serviceStates.set(serviceName, 'ready');
+                
+                logger.info(`Initialized ${serviceName} service`);
+            } catch (error) {
+                this.state.serviceStates.set(serviceName, 'error');
+                throw this.createServiceError(serviceName, error);
+            }
         }
     }
 
-    private async initializeService(name: string, service: any): Promise<void> {
-        try {
-            await service.initialize();
-            this.state.activeServices.push(name);
-            logger.info(`${name} service initialized`);
-        } catch (error) {
-            logger.error(`Failed to initialize ${name} service:`, error);
-            throw error;
-        }
+    private createServiceError(serviceName: ServiceName, error: unknown): ServiceError {
+        const serviceError: ServiceError = {
+            name: 'ServiceError',
+            message: error instanceof Error ? error.message : String(error),
+            serviceName,
+            severity: 'high',
+            timestamp: new Date(),
+            stack: error instanceof Error ? error.stack : undefined
+        };
+        return serviceError;
     }
 
     private async verifyServicesHealth(): Promise<void> {
@@ -364,6 +344,16 @@ export class ServiceManager extends EventEmitter {
         return service.getStatus();
     }
 
+    public async getServiceStatuses(): Promise<Record<ServiceName, ServiceStatus>> {
+        const statuses: Partial<Record<ServiceName, ServiceStatus>> = {};
+        
+        for (const [name, service] of this.services.entries()) {
+            statuses[name] = service.getStatus();
+        }
+        
+        return statuses as Record<ServiceName, ServiceStatus>;
+    }
+
     // Service accessors
     public getAIService(): IrohAIService {
         return this.aiService;
@@ -385,7 +375,7 @@ export class ServiceManager extends EventEmitter {
         return this.hardwareService;
     }
 
-    public getState(): ServiceState {
+    public getState(): ServiceManagerState {
         return { ...this.state };
     }
 
@@ -405,7 +395,7 @@ export class ServiceManager extends EventEmitter {
             }
         }
         
-        this.state.activeServices = [];
+        this.state.activeServices.clear();
     }
 
     public async shutdown(): Promise<void> {
@@ -470,5 +460,27 @@ export class ServiceManager extends EventEmitter {
             throw new ConfigurationError('No configuration provided');
         }
         // ... rest of validation
+    }
+
+    private getDahdiConfig(): DAHDIConfig {
+        return {
+            devicePath: this.config.hardware.dahdi.devicePath,
+            controlPath: this.config.hardware.dahdi.controlPath,
+            sampleRate: 8000,
+            channels: 1,
+            bitDepth: 16,
+            bufferSize: this.config.audio.bufferSize,
+            channel: this.config.hardware.dahdi.channel
+        };
+    }
+
+    private getAIConfig(): AIServiceConfig {
+        return {
+            anthropicKey: this.config.ai.anthropicKey,
+            elevenLabsKey: this.config.ai.elevenLabsKey,
+            maxTokens: this.config.ai.maxTokens,
+            temperature: this.config.ai.temperature,
+            model: this.config.ai.model
+        };
     }
 }

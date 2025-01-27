@@ -5,6 +5,7 @@
 
 import { Buffer } from 'buffer';
 import { AudioInput } from './audio';
+import { BaseConfig } from '../core';
 
 // Base hardware error class
 export class HardwareError extends Error {
@@ -28,7 +29,7 @@ export class DAHDIFormatError extends HardwareError {
 }
 
 // Core DAHDI configuration interface
-export interface DAHDIConfig {
+export interface DAHDIConfig extends BaseConfig {
     /** Path to DAHDI device */
     devicePath: string;
     

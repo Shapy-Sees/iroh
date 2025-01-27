@@ -10,7 +10,9 @@ import fs from 'fs';
 import { 
     LogLevel, 
     LogMetadata, 
-    LoggerConfig, 
+    LoggerConfig,
+    createLogMetadata,
+    validateMetadata,
     LogEntry,
     isErrorMetadata,
     isHardwareMetadata,
@@ -95,8 +97,13 @@ export class Logger {
         });
     }
 
-    public error(message: string, metadata?: LogMetadata): void {
+    public error(message: string, metadata?: Partial<LogMetadata>): void {
         const enrichedMetadata = this.enrichMetadata('error', metadata);
+        if (!validateMetadata(enrichedMetadata)) {
+            console.error('Invalid log metadata:', enrichedMetadata);
+            this.logger.error(message);
+            return;
+        }
         this.logger.error(message, enrichedMetadata);
     }
 
@@ -115,15 +122,19 @@ export class Logger {
         this.logger.debug(message, enrichedMetadata);
     }
 
-    private enrichMetadata(level: LogLevel, metadata?: LogMetadata): LogMetadata {
-        const enriched: LogMetadata = {
+    private enrichMetadata(level: LogLevel, metadata?: Partial<LogMetadata>): LogMetadata {
+        if (!metadata?.component) {
+            metadata = { ...metadata, component: 'system' };
+        }
+
+        const enriched = {
             timestamp: new Date().toISOString(),
             ...metadata,
             context: {
                 nodeEnv: process.env.NODE_ENV,
                 ...metadata?.context
             }
-        };
+        } as LogMetadata;
 
         // Add type-specific enrichments
         if (isErrorMetadata(enriched)) {
@@ -145,12 +156,15 @@ export class Logger {
 
     private enrichErrorMetadata(metadata: ErrorLogMetadata): void {
         if (metadata.error && metadata.error instanceof Error) {
-            metadata.error = {
+            const errorObj = {
                 message: metadata.error.message,
                 name: metadata.error.name,
                 stack: metadata.error.stack,
                 code: (metadata.error as any).code
             };
+
+            metadata.error = errorObj;
+            metadata.severity = metadata.severity || ErrorSeverity.MEDIUM;
         }
     }
 

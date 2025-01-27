@@ -1,8 +1,11 @@
 import { ErrorSeverity } from './errors';
 
+// Component types for metadata
+export type LogComponent = 'hardware' | 'audio' | 'service' | 'system' | 'ai' | 'state';
+
 // Base metadata interface with required fields
 export interface BaseLogMetadata {
-    component: string;
+    component: LogComponent;
     timestamp?: string;
     context?: Record<string, unknown>;
     operation?: string;
@@ -100,7 +103,7 @@ export interface LogEntry {
 
 // Type guards with discriminated unions
 export const isErrorMetadata = (metadata: LogMetadata): metadata is ErrorLogMetadata =>
-    metadata.type === 'error' && 'error' in metadata;
+    'type' in metadata && metadata.type === 'error' && 'error' in metadata;
 
 export const isHardwareMetadata = (metadata: LogMetadata): metadata is HardwareLogMetadata =>
     metadata.type === 'hardware' && 'deviceId' in metadata;
@@ -121,6 +124,12 @@ export const isStateMetadata = (metadata: LogMetadata): metadata is StateLogMeta
 export const validateMetadata = (metadata: LogMetadata): boolean => {
     if (!metadata.type || !metadata.component) return false;
 
+    const isValidComponent = (component: string): component is LogComponent => {
+        return ['hardware', 'audio', 'service', 'system', 'ai', 'state'].includes(component);
+    };
+
+    if (!isValidComponent(metadata.component)) return false;
+
     switch (metadata.type) {
         case 'error':
             return isErrorMetadata(metadata);
@@ -138,3 +147,15 @@ export const validateMetadata = (metadata: LogMetadata): boolean => {
             return false;
     }
 };
+
+// New helper for creating metadata
+export const createLogMetadata = <T extends LogMetadata>(
+    type: T['type'],
+    component: LogComponent,
+    data: Omit<T, 'type' | 'component' | 'timestamp'>
+): T => ({
+    type,
+    component,
+    timestamp: new Date().toISOString(),
+    ...data
+} as T);

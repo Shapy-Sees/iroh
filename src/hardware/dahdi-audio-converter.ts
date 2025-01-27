@@ -16,7 +16,9 @@ import {
 } from '../types/hardware/dahdi';
 import {
     AudioError,
-    AudioFormatError
+    AudioFormatError,
+    AudioFormat,
+    isValidAudioFormat
 } from '../types/hardware/audio';
 
 interface AudioConverterOptions {
@@ -33,11 +35,11 @@ interface ConverterConfig {
 
 export class DAHDIAudioConverter {
     private readonly config: Required<ConverterConfig>;
-    private readonly dahdiFormat: DAHDIAudioFormat = {
+    private readonly dahdiFormat: AudioFormat = {
         sampleRate: 8000,
         channels: 1,
         bitDepth: 16,
-        format: 'linear'
+        encoding: 'linear'
     };
 
     constructor(config: Partial<ConverterConfig> = {}) {
@@ -84,14 +86,52 @@ export class DAHDIAudioConverter {
                format?.format === 'linear';
     }
 
-    private async convert(buffer: Buffer, sourceFormat?: Partial<DAHDIAudioFormat>): Promise<Buffer> {
-        // Implementation would use a native audio processing library
-        // This is a placeholder that returns the original buffer
-        logger.debug('Converting audio to DAHDI format', {
-            sourceFormat,
-            targetFormat: this.dahdiFormat
-        });
+    private async convert(buffer: Buffer, sourceFormat: Partial<AudioFormat>): Promise<Buffer> {
+        if (!isValidAudioFormat(sourceFormat)) {
+            throw new AudioFormatError('Invalid source format');
+        }
+
+        // Handle sample rate conversion
+        if (sourceFormat.sampleRate !== this.dahdiFormat.sampleRate) {
+            buffer = await this.resample(buffer, sourceFormat.sampleRate);
+        }
+
+        // Handle channel conversion
+        if (sourceFormat.channels !== this.dahdiFormat.channels) {
+            buffer = this.convertChannels(buffer, sourceFormat.channels);
+        }
+
+        // Handle bit depth conversion
+        if (sourceFormat.bitDepth !== this.dahdiFormat.bitDepth) {
+            buffer = this.convertBitDepth(buffer, sourceFormat.bitDepth);
+        }
+
         return buffer;
+    }
+
+    private async resample(buffer: Buffer, sourceSampleRate: number): Promise<Buffer> {
+        const ratio = this.dahdiFormat.sampleRate / sourceSampleRate;
+        // Implement resampling logic here
+        return buffer; // Placeholder
+    }
+
+    private convertChannels(buffer: Buffer, sourceChannels: number): Buffer {
+        if (sourceChannels === 2) {
+            // Convert stereo to mono by averaging channels
+            const samples = new Int16Array(buffer.length / 4);
+            for (let i = 0; i < buffer.length; i += 4) {
+                const left = buffer.readInt16LE(i);
+                const right = buffer.readInt16LE(i + 2);
+                samples[i / 4] = Math.round((left + right) / 2);
+            }
+            return Buffer.from(samples.buffer);
+        }
+        return buffer;
+    }
+
+    private convertBitDepth(buffer: Buffer, sourceBitDepth: number): Buffer {
+        // Implement bit depth conversion logic
+        return buffer; // Placeholder
     }
 
     public destroy(): void {

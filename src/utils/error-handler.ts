@@ -13,6 +13,8 @@ import {
 
 import { EventEmitter } from 'events';
 import { logger } from './logger';
+import { createLogMetadata } from '../types/logging';
+import { ErrorSeverity, IrohError } from '../types/errors';
 
 // Error severity levels
 export enum ErrorSeverity {
@@ -98,12 +100,12 @@ export class ErrorHandler extends EventEmitter {
         const severity = context.severity || this.classifyError(wrappedError);
 
         try {
-            // Log the error with context
-            logger.error('Error detected', {
+            // Log the error with properly typed metadata
+            logger.error('Error detected', createLogMetadata('error', context.component, {
                 error: wrappedError,
                 context,
                 severity
-            });
+            }));
 
             // Increment retry count
             const retryKey = `${context.component}:${context.operation}`;
@@ -126,7 +128,13 @@ export class ErrorHandler extends EventEmitter {
             this.emit('error', { error: wrappedError, context });
 
         } catch (handlingError) {
-            logger.error('Error during error handling:', handlingError);
+            logger.error('Error during error handling:', createLogMetadata('error', 'system', {
+                error: ensureError(handlingError),
+                context: {
+                    originalError: wrappedError,
+                    originalContext: context
+                }
+            }));
             this.emit('errorHandlingFailed', {
                 originalError: wrappedError,
                 handlingError: ensureError(handlingError)

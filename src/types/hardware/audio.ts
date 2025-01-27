@@ -42,6 +42,22 @@ export interface VoiceEvent {
     confidence?: number;
 }
 
+export interface AudioFormat {
+    sampleRate: number;
+    channels: number;
+    bitDepth: number;
+    encoding?: 'linear' | 'alaw' | 'ulaw';
+}
+
+export function isValidAudioFormat(format: Partial<AudioFormat>): format is AudioFormat {
+    return (
+        typeof format.sampleRate === 'number' &&
+        typeof format.channels === 'number' &&
+        typeof format.bitDepth === 'number' &&
+        (!format.encoding || ['linear', 'alaw', 'ulaw'].includes(format.encoding))
+    );
+}
+
 /**
  * Audio processing errors
  */

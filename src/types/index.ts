@@ -6,7 +6,20 @@
 
 import { Buffer } from 'buffer';
 
-// Core config types
+// Export core types
+export * from './core';
+export * from './errors';
+export * from './logging';
+
+// Export service types
+export * from './services';
+
+// Export hardware types
+export * from './hardware/audio';
+export * from './hardware/dahdi';
+export * from './hardware/fxs';
+
+// Export specific interfaces
 export interface Config {
     app: AppConfig;
     audio: AudioConfig;
@@ -14,69 +27,6 @@ export interface Config {
     services: ServiceConfig;
 }
 
-export interface AppConfig {
-    name: string;
-    env: 'development' | 'production' | 'test';
-    port: number;
-    dataDir?: string;
-}
-
-export interface LogConfig {
-    level: 'debug' | 'info' | 'warn' | 'error';
-    directory: string;
-    maxFiles: string;
-    maxSize: string;
-    console?: boolean;
-}
-
-// Event system types
-export interface EventBusConfig {
-    maxHistory?: number;
-    debug?: boolean;
-    persistence?: {
-        enabled: boolean;
-        path?: string;
-    };
-}
-
-export interface EventHistoryItem<T = any> {
-    event: string;
-    data: T;
-    timestamp: number;
-    id: string;
-    metadata?: Record<string, any>;
-}
-
-// Status tracking
-export interface ServiceStatus {
-    isInitialized: boolean;
-    isHealthy: boolean;
-    lastError?: Error;
-    metrics: {
-        uptime: number;
-        errors: number;
-        warnings: number;
-        lastChecked?: Date;
-    };
-}
-
-export interface LogMetadata {
-    message?: string;
-    component?: string;
-    error?: {
-        message: string;
-        name: string;
-        stack?: string;
-        code?: string;
-    };
-    context?: Record<string, unknown>;
-    [key: string]: unknown;  // Allow additional properties
-}
-
-
-// Re-export all types
-export * from './hardware/dahdi';
-export * from './hardware/fxs';
-export * from './hardware/audio';
-export * from './services';
-export * from './errors';
+// Remove duplicate interface definitions and use imports
+export type { AppConfig, LogConfig } from './core';
+export type { AudioConfig, ServiceConfig } from './services';

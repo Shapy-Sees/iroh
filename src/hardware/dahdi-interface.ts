@@ -32,7 +32,7 @@ import {
     DAHDIFormatError
 } from '../types/hardware/dahdi';
 
-
+import { AudioFormat, AudioInput, AudioError } from '../types/hardware/audio';
 
 export class DAHDIInterface extends EventEmitter {
     private fileHandle: FileHandle | null = null;
@@ -44,6 +44,12 @@ export class DAHDIInterface extends EventEmitter {
     private lastError: Error | null = null;
     private channelStatus: DAHDIChannelStatus | null = null;
     private audioConverter: DAHDIAudioConverter;
+    private readonly audioFormat: AudioFormat = {
+        sampleRate: 8000,
+        channels: 1,
+        bitDepth: 16,
+        encoding: 'linear'
+    };
 
     constructor(config: Partial<DAHDIConfig>) {
         super();
@@ -226,31 +232,26 @@ export class DAHDIInterface extends EventEmitter {
             const bytesRead = await this.fileHandle.read(buffer, 0, buffer.length);
 
             if (bytesRead > 0) {
-                // Create audio input object
                 const audioInput: AudioInput = {
-                    sampleRate: this.config.sampleRate,
-                    channels: this.config.channels,
-                    bitDepth: this.config.bitDepth,
+                    sampleRate: this.audioFormat.sampleRate,
+                    channels: this.audioFormat.channels,
+                    bitDepth: this.audioFormat.bitDepth,
                     data: buffer.slice(0, bytesRead)
                 };
 
-                // Emit audio data for processing
                 this.emit('audio', audioInput);
             }
 
-            // Continue reading if active
             if (this.isActive) {
                 setImmediate(() => this.readAudioLoop());
             }
-
         } catch (error) {
             logger.error('Error in audio read loop:', error);
-            this.lastError = error as Error;
-            
-            // Attempt to recover
+            this.emit('error', new DAHDIError('Audio read error', error as Error));
             setTimeout(() => this.readAudioLoop(), 1000);
         }
     }
+
     public async generateTone(options: {
         frequency: number;
         duration: number;
@@ -267,18 +268,15 @@ export class DAHDIInterface extends EventEmitter {
       }
     
      // Handles audio playback with format conversion 
-    public async playAudio(buffer: Buffer, format?: Partial<DAHDIAudioFormat>): Promise<void> {
+    public async playAudio(buffer: Buffer, format: Partial<AudioFormat> = this.audioFormat): Promise<void> {
         try {
-            // Convert audio if needed
-            const dahdiBuffer = format ? 
-                await this.audioConverter.convertToDAHDI(buffer, format) :
-                buffer;
-                
-            // Play through DAHDI
-            await this.writeAudio(dahdiBuffer);
-            
+            const convertedBuffer = await this.audioConverter.convertToDAHDI(buffer, format);
+            await this.writeAudio(convertedBuffer);
         } catch (error) {
-            logger.error('Error playing audio:', error);
+            if (error instanceof AudioError) {
+                logger.error('Audio format error:', error);
+                throw error;
+            }
             throw new DAHDIError('Audio playback failed', error as Error);
         }
     }

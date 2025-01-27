@@ -1,53 +1,55 @@
 // src/types/services/index.ts
 
+import { BaseConfig, BaseStatus } from '../core';
+import { HardwareConfig } from '../hardware';
+
+// Service interfaces
+export interface Service {
+    initialize(): Promise<void>;
+    shutdown(): Promise<void>;
+    getStatus(): ServiceStatus;
+}
+
+export interface ServiceStatus extends BaseStatus {
+    state: ServiceState;
+    lastUpdate?: Date;
+}
+
+export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown';
+
+export interface ServiceConfig extends BaseConfig {
+    app: {
+        name: string;
+        env: string;
+        port: number;
+    };
+    hardware: HardwareConfig;
+    logging: {
+        level: string;
+        directory: string;
+        maxFiles: string;
+        maxSize: string;
+    };
+}
+
+export interface ServiceError extends Error {
+    serviceName: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    timestamp: Date;
+}
+
+// Service registry type
+export type ServiceRegistry = {
+    ai: IrohAIService;
+    home: HAService;
+    music: MusicService;
+    timer: TimerService;
+    hardware: HardwareService;
+};
+
+export type ServiceName = keyof ServiceRegistry;
+
+// Re-export service-specific configs
 export * from './ai';
 export * from './home';
 export * from './music';
-
-export interface ServiceConfig {
-    ai: AIConfig;
-    home: HomeConfig;
-    music: MusicConfig;
-}
-
-// Service status interface
-export interface ServiceStatus {
-    isHealthy: boolean;
-    state: string;
-    lastError?: Error;
-    metadata?: Record<string, any>;
-}
-
-// Base config interface
-export interface BaseServiceConfig {
-    enabled: boolean;
-    retryAttempts?: number;
-    timeout?: number;
-}
-
-// Refined service configs
-export interface AudioConfig extends BaseServiceConfig {
-    sampleRate: number;
-    channels: number;
-    bitDepth: number;
-    bufferSize: number;
-}
-
-export interface AIServiceConfig extends BaseServiceConfig {
-    model: string;
-    apiKey: string;
-    maxTokens?: number;
-    temperature?: number;
-}
-
-export interface MusicServiceConfig extends BaseServiceConfig {
-    provider: 'spotify' | 'local';
-    apiKey?: string;
-    directory?: string;
-}
-
-export interface HomeServiceConfig extends BaseServiceConfig {
-    url: string;
-    token: string;
-    entityPrefix?: string;
-}

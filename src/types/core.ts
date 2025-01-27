@@ -1,7 +1,7 @@
 import { Buffer } from 'buffer';
+import { LOG_LEVELS } from '../config/constants';
 
-// ===== Core Result Types =====
-
+// Core result and error types
 export interface Result<T, E = Error> {
     success: boolean;
     data?: T;
@@ -9,115 +9,73 @@ export interface Result<T, E = Error> {
     metadata?: Record<string, unknown>;
 }
 
-// ===== Configuration Types =====
-
-export interface AppConfig {
-    name: string;
-    env: 'development' | 'production' | 'test';
-    port: number;
+// Base configuration and status interfaces
+export interface BaseConfig {
+    enabled?: boolean;
+    retryAttempts?: number;
+    timeout?: number;
 }
 
 export interface HardwareConfig {
     dahdi: {
-        device: string;
-        span: number;
-        channel: number;
-        loadzone: string;
-        defaultzone: string;
-        echocancel: boolean;
-        echocanceltaps: number;
-        bufferSize: number;
-        ringTimeout: number;
-        dtmfTimeout: number;
+        devicePath: string;
+        sampleRate: 8000;
+        channel: {
+            number: number;
+            ringCadence: [number, number];
+            callerIdFormat: 'bell' | 'v23' | 'dtmf';
+            impedance: 600 | 900;
+            gain: {
+                rx: number;
+                tx: number;
+            };
+        };
+        audio: {
+            echoCancellation: {
+                enabled: boolean;
+                taps: number;
+                nlp: boolean;
+            };
+            gainControl: {
+                enabled: boolean;
+                targetLevel: number;
+                maxGain: number;
+            };
+            dtmfDetection: {
+                useHardware: boolean;
+                minDuration: number;
+                threshold: number;
+            };
+        };
+        debug?: {
+            logHardware: boolean;
+            logAudio: boolean;
+            traceDahdi: boolean;
+        };
     };
     audio: {
-        sampleRate: 8000;
-        channels: 1;
-        bitDepth: 16;
+        sampleRate: number;
+        channels: number;
+        bitDepth: number;
         vadThreshold: number;
         silenceThreshold: number;
     };
 }
 
-export interface AIConfig {
-    anthropicKey: string;
-    elevenLabsKey: string;
-    openAIKey: string;
-    maxTokens: number;
-    temperature: number;
-    voiceId: string;
-    model?: string;
+export interface BaseStatus {
+    isHealthy: boolean;
+    lastError?: Error;
+    metadata?: Record<string, unknown>;
 }
 
-export interface MusicConfig {
-    spotifyClientId?: string;
-    spotifyClientSecret?: string;
-}
-
-export interface HomeConfig {
-    homekitBridge: {
-        pin: string;
-        name: string;
-        port: number;
-    };
-}
-
-export interface LogConfig {
-    level: 'debug' | 'info' | 'warn' | 'error';
-    directory: string;
-    maxFiles: string;
-    maxSize: string;
-}
-
-export interface ServiceConfig {
-    app: AppConfig;
-    hardware: HardwareConfig;
-    ai: AIConfig;
-    music: MusicConfig;
-    home: HomeConfig;
-    logging: LogConfig;
-}
-
-// ===== Hardware States =====
-
-export enum HardwareState {
-    INITIALIZING = 'initializing',
-    READY = 'ready',
-    ERROR = 'error',
-    OFFLINE = 'offline'
-}
-
-export enum PhoneState {
-    IDLE = 'idle',
-    OFF_HOOK = 'off_hook',
-    RINGING = 'ringing',
-    IN_CALL = 'in_call',
-    ERROR = 'error'
-}
-
-// ===== Event Types =====
-
+// Event system types
 export interface BaseEvent {
     type: string;
     timestamp: number;
     metadata?: Record<string, unknown>;
 }
 
-export interface HardwareEvent extends BaseEvent {
-    type: 'hardware';
-    status: HardwareState;
-    details?: Record<string, unknown>;
-}
-
-export interface ServiceEvent extends BaseEvent {
-    type: 'service';
-    service: string;
-    status: 'started' | 'stopped' | 'error';
-    details?: Record<string, unknown>;
-}
-
-// ===== Command Types =====
-
+// Command system types
 export type CommandStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface Command {
@@ -133,8 +91,7 @@ export interface CommandResult<T> extends Result<T> {
     duration: number;
 }
 
-// ===== Diagnostic Types =====
-
+// Diagnostic types
 export interface DiagnosticResult {
     test: string;
     passed: boolean;
@@ -143,10 +100,8 @@ export interface DiagnosticResult {
     timestamp?: number;
 }
 
-// Export all error types from errors.ts
-export * from './errors';
+// Logging types
+export type LogLevel = typeof LOG_LEVELS[number];
 
-// Export hardware-specific types
-export * from './hardware/audio';
-export * from './hardware/dahdi';
-export * from './hardware/fxs';
+// Re-export hardware types
+export * from './hardware';
