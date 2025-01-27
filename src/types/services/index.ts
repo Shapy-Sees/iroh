@@ -1,34 +1,18 @@
 // src/types/services/index.ts
 //
-// Consolidated service type definitions that define the core service interfaces
+// Service type definitions that define the core service interfaces
 // and type system for all services in the application
 
-import { BaseConfig, BaseStatus, AIConfig, HomeConfig, MusicConfig } from '../core';
+import { ServiceStatus, AudioConfig, AIConfig, HomeConfig, MusicConfig } from '../core';
 import { HardwareConfig } from '../hardware';
 import { AudioBuffer } from '../hardware/audio';
 
-// Base Service interface
+// Base Service interface that all services must implement
 export interface Service {
     initialize(): Promise<void>;
     shutdown(): Promise<void>;
     getStatus(): ServiceStatus;
     isHealthy(): boolean;
-}
-
-export interface ServiceStatus extends BaseStatus {
-    state: ServiceState;
-    isHealthy: boolean;
-    lastError?: ServiceError;
-    lastUpdate?: Date;
-}
-
-export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
-
-export interface ServiceError extends Error {
-    name: 'ServiceError';
-    serviceName: string;
-    severity: 'low' | 'medium' | 'high';
-    timestamp: Date;
 }
 
 // Service-specific interfaces
@@ -41,7 +25,7 @@ export interface IrohAIService extends Service {
 
 export interface HAService extends Service {
     controlDevice(deviceId: string, command: string): Promise<void>;
-    getEntityStatus(entityId: string): Promise<HAEntityStatus>;
+    getEntityState(entityId: string): Promise<HAEntityStatus>;
     onEntityState(entityId: string, handler: HAStateHandler): void;
     config: HomeConfig;
 }
@@ -55,13 +39,6 @@ export interface HAEntityStatus {
 
 export type HAStateHandler = (entityId: string, state: HAEntityStatus) => Promise<void>;
 
-export interface HAEvent {
-    type: 'state_changed' | 'service_call';
-    entityId: string;
-    state: HAEntityStatus;
-    timestamp: Date;
-}
-
 export interface MusicService extends Service {
     play(track: string): Promise<void>;
     pause(): Promise<void>;
@@ -74,7 +51,6 @@ export interface TimerService extends Service {
     createTimer(duration: number): Promise<string>;
     cancelTimer(timerId: string): Promise<void>;
     getActiveTimers(): string[];
-    config: TimerConfig;
 }
 
 export interface HardwareService extends Service {
@@ -85,7 +61,23 @@ export interface HardwareService extends Service {
     config: HardwareConfig;
 }
 
-// Service registry and config types
+// Service error types
+export interface ServiceError extends Error {
+    name: 'ServiceError';
+    serviceName: string;
+    severity: 'low' | 'medium' | 'high';
+    timestamp: Date;
+}
+
+// Service events
+export interface ServiceEvent {
+    type: 'state_changed' | 'error' | 'ready';
+    service: string;
+    timestamp: Date;
+    data?: any;
+}
+
+// Service registry type
 export interface ServiceRegistry {
     ai: IrohAIService;
     home: HAService;
@@ -95,26 +87,3 @@ export interface ServiceRegistry {
 }
 
 export type ServiceName = keyof ServiceRegistry;
-
-export interface ServiceConfig extends BaseConfig {
-    app: {
-        name: string;
-        env: string;
-        port: number;
-    };
-    hardware: HardwareConfig;
-    logging: {
-        level: string;
-        directory: string;
-        maxFiles: string;
-        maxSize: string;
-    };
-    ai: AIConfig;
-    home: HomeConfig;
-    music: MusicConfig;
-}
-
-// Additional type exports
-export * from './ai';
-export * from './home';
-export * from './music';

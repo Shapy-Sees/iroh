@@ -14,6 +14,7 @@ import { ConversationManager } from './conversation-manager';
 import { Cache } from '../../utils/cache';
 import { IrohAIService, ServiceStatus, ServiceError } from '../../types/services';
 import { AIConfig } from '../../types/core';
+import { Service, ServiceState } from '../../types/services';
 
 // Define the base interface
 export interface AIService {
@@ -47,16 +48,22 @@ interface AIServiceEvents {
     error: (error: ServiceError) => void;
 }
 
-export class IrohAIService extends EventEmitter implements IrohAIService {
+export class IrohAIService extends EventEmitter implements IrohAIService, Service {
     private client: Anthropic;
     private isInitialized: boolean = false;
     public readonly config: AIConfig;
     private streamingConfig: StreamingConfig;
     private cache: Cache;
     private conversationManager: ConversationManager;
+    private serviceStatus: ServiceStatus;
 
     constructor(private config: AIServiceConfig) {
         super();
+        this.serviceStatus = {
+            state: 'initializing',
+            isHealthy: false,
+            lastUpdate: new Date()
+        };
         
         // Initialize Anthropic client
         this.client = new Anthropic({
@@ -88,8 +95,15 @@ export class IrohAIService extends EventEmitter implements IrohAIService {
             }
 
             this.isInitialized = true;
+            this.serviceStatus.state = 'ready';
+            this.serviceStatus.isHealthy = true;
+            this.serviceStatus.lastUpdate = new Date();
             logger.info('AI Service initialized');
         } catch (error) {
+            this.serviceStatus.state = 'error';
+            this.serviceStatus.isHealthy = false;
+            this.serviceStatus.lastError = error instanceof Error ? error : new Error(String(error));
+            this.serviceStatus.lastUpdate = new Date();
             logger.error('Failed to initialize AI Service:', error instanceof Error ? error : new Error(String(error)));
             throw error;
         }
@@ -218,10 +232,11 @@ export class IrohAIService extends EventEmitter implements IrohAIService {
         try {
             await this.cache.shutdown();
             this.removeAllListeners();
-            this.isInitialized = false;
-            logger.info('AI Service shut down');
+            this.serviceStatus.state = 'shutdown';
+            this.serviceStatus.isHealthy = false;
+            this.serviceStatus.lastUpdate = new Date();
         } catch (error) {
-            logger.error('Failed to shutdown AI Service:', error instanceof Error ? error : new Error(String(error)));
+            this.serviceStatus.lastError = error instanceof Error ? error : new Error(String(error));
             throw error;
         }
     }
@@ -240,15 +255,11 @@ export class IrohAIService extends EventEmitter implements IrohAIService {
     }
 
     public getStatus(): ServiceStatus {
-        return {
-            state: this.isInitialized ? 'ready' : 'initializing',
-            isHealthy: this.isInitialized,
-            lastUpdate: new Date(),
-            metrics: {
-                uptime: process.uptime(),
-                errors: 0
-            }
-        };
+        return this.serviceStatus;
+    }
+
+    public isHealthy(): boolean {
+        return this.serviceStatus.isHealthy;
     }
 
     // Type-safe event emitter

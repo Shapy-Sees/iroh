@@ -34,6 +34,16 @@ import { errorHandler } from '../utils/error-handler';
 import { AIConfig, HAConfig } from '../types';
 import { DAHDIConfig } from '../types/hardware/dahdi';
 
+type ServiceName = 'ai' | 'home' | 'music' | 'timer' | 'hardware';
+
+interface ServiceRegistry {
+    ai: IrohAIService;
+    home: HAService;
+    music: MusicService;
+    timer: TimerService;
+    hardware: HardwareService;
+}
+
 interface ServiceManagerState {
     isInitialized: boolean;
     activeServices: Set<ServiceName>;
@@ -73,7 +83,7 @@ interface AIServiceConfig extends BaseConfig {
 }
 
 export class ServiceManager extends EventEmitter {
-    private readonly services: Map<ServiceName, Service>;
+    private readonly services: Map<ServiceName, ServiceRegistry[ServiceName]>;
     private state: ServiceManagerState;
     private readonly config: Config;
     private readonly phoneController: PhoneController;
@@ -87,28 +97,30 @@ export class ServiceManager extends EventEmitter {
     private hardwareService!: HardwareService;
     private intentHandler!: IntentHandler;
 
-    constructor(config: ServiceConfig, phoneController: PhoneController) {
+    constructor(config: Config, phoneController: PhoneController) {
         super();
         this.services = new Map();
-        this.setupServices(config);
+        this.config = config;
+        this.phoneController = phoneController;
+        this.state = {
+            isInitialized: false,
+            activeServices: new Set(),
+            serviceStates: new Map(),
+            startTime: undefined,
+            lastError: undefined
+        };
+        
+        this.setupServices();
     }
 
-    private setupServices(config: ServiceConfig): void {
-        this.services.set('hardware', new HardwareService(config.hardware));
-        this.services.set('ai', new AIService(config.ai));
-        this.services.set('home', new HAService(config.home));
-        this.services.set('music', new MusicService(config.music));
-        this.services.set('timer', new TimerService(config));
-    }
-
-    private createServiceInstances(): void {
-        // Create services with type safety
-        this.createService('hardware', () => new HardwareService(this.getDahdiConfig()));
-        this.createService('ai', () => new IrohAIService(this.getAIConfig()));
+    private setupServices(): void {
+        // Initialize map with typed service instances
+        this.createService('hardware', () => new HardwareService(this.config.hardware));
+        this.createService('ai', () => new IrohAIService(this.config.ai));
         this.createService('home', () => new HAService(this.config.home));
         this.createService('music', () => new MusicService(this.config.music));
         this.createService('timer', () => new TimerService(
-            { maxTimers: 5, maxDuration: 180 },
+            this.config.timer,
             this.phoneController,
             this.getService('ai')
         ));
@@ -116,7 +128,7 @@ export class ServiceManager extends EventEmitter {
 
     private createService<T extends ServiceName>(
         name: T,
-        factory: () => ServiceRegistry[T] & Service
+        factory: () => ServiceRegistry[T]
     ): void {
         const service = factory();
         this.services.set(name, service);
@@ -127,9 +139,6 @@ export class ServiceManager extends EventEmitter {
         const service = this.services.get(name);
         if (!service) {
             throw new ConfigurationError(`Service ${name} not found`);
-        }
-        if (!this.isValidService(service)) {
-            throw new ConfigurationError(`Invalid service implementation for ${name}`);
         }
         return service as ServiceRegistry[T];
     }
@@ -200,54 +209,51 @@ export class ServiceManager extends EventEmitter {
             logger.info('Initializing services...');
             this.state.startTime = Date.now();
 
-            // Initialize services in correct order with proper error handling
-            await this.initializeServices();
+            // Initialize in dependency order
+            const initOrder: ServiceName[] = ['hardware', 'ai', 'home', 'music', 'timer'];
             
-            // Verify all services are healthy
+            for (const serviceName of initOrder) {
+                await this.initializeService(serviceName);
+            }
+
             await this.verifyServicesHealth();
+            this.setupEventHandlers();
             
             this.state.isInitialized = true;
-            
-            // Emit initialization complete event
             this.emit('initialized');
-            
-            logger.info('Services initialized successfully', {
-                activeServices: Array.from(this.state.activeServices),
-                initTime: Date.now() - this.state.startTime
-            });
 
         } catch (error) {
-            const err = error instanceof Error ? error : new Error(String(error));
-            this.state.lastError = err;
-            logger.error('Failed to initialize services:', err);
-            throw new ServiceError(`Service initialization failed: ${err.message}`);
+            this.state.lastError = this.createServiceError('', error);
+            throw error;
         } finally {
             this.initPromise = null;
         }
     }
 
-    private async initializeServices(): Promise<void> {
-        const initOrder: ServiceName[] = ['hardware', 'ai', 'home', 'music', 'timer'];
+    private async initializeService(serviceName: ServiceName): Promise<void> {
+        try {
+            const service = this.getService(serviceName);
+            await service.initialize();
+            
+            this.state.activeServices.add(serviceName);
+            this.state.serviceStates.set(serviceName, 'ready');
+            
+            logger.info(`Initialized ${serviceName} service`);
+        } catch (error) {
+            this.state.serviceStates.set(serviceName, 'error');
+            throw this.createServiceError(serviceName, error);
+        }
+    }
 
-        for (const serviceName of initOrder) {
-            try {
-                const service = this.getService(serviceName);
-                
-                // Validate service implements required interface
-                if (!this.isValidService(service)) {
-                    throw new ConfigurationError(`Invalid service implementation for ${serviceName}`);
-                }
+    private async verifyServicesHealth(): Promise<void> {
+        const unhealthyServices = Array.from(this.services.entries())
+            .filter(([_, service]) => !service.isHealthy())
+            .map(([name]) => name);
 
-                await service.initialize();
-                
-                this.state.activeServices.add(serviceName);
-                this.state.serviceStates.set(serviceName, 'ready');
-                
-                logger.info(`Initialized ${serviceName} service`);
-            } catch (error) {
-                this.state.serviceStates.set(serviceName, 'error');
-                throw this.createServiceError(serviceName, error);
-            }
+        if (unhealthyServices.length > 0) {
+            throw new ServiceError(
+                `Unhealthy services detected: ${unhealthyServices.join(', ')}`
+            );
         }
     }
 
@@ -261,22 +267,6 @@ export class ServiceManager extends EventEmitter {
             stack: error instanceof Error ? error.stack : undefined
         };
         return serviceError;
-    }
-
-    private async verifyServicesHealth(): Promise<void> {
-        const unhealthyServices: Array<string> = [];
-
-        for (const [name, service] of this.services) {
-            if (typeof service.isHealthy === 'function' && !service.isHealthy()) {
-                unhealthyServices.push(name);
-            }
-        }
-
-        if (unhealthyServices.length > 0) {
-            throw new ServiceError(
-                `Unhealthy services detected: ${unhealthyServices.join(', ')}`
-            );
-        }
     }
 
     private async handleStateChange(event: { 
@@ -371,11 +361,8 @@ export class ServiceManager extends EventEmitter {
         }
     }
 
-    public getServiceStatus(serviceName: string): ServiceStatus | null {
-        const service = this.services.get(serviceName);
-        if (!service || typeof service.getStatus !== 'function') {
-            return null;
-        }
+    public getServiceStatus(serviceName: ServiceName): ServiceStatus {
+        const service = this.getService(serviceName);
         return service.getStatus();
     }
 
@@ -434,17 +421,40 @@ export class ServiceManager extends EventEmitter {
     }
 
     public async shutdown(): Promise<void> {
+        if (!this.state.isInitialized) {
+            return;
+        }
+
         logger.info('Shutting down service manager...');
 
         try {
-            await this.stopServices();
-            this.state.isInitialized = false;
-            this.removeAllListeners();
+            // Shutdown in reverse initialization order
+            const shutdownOrder = Array.from(this.state.activeServices).reverse();
             
-            logger.info('Service manager shutdown complete');
+            for (const serviceName of shutdownOrder) {
+                await this.shutdownService(serviceName);
+            }
+
+            this.state.isInitialized = false;
+            this.state.activeServices.clear();
+            this.removeAllListeners();
+
         } catch (error) {
             logger.error('Error during service shutdown:', error);
             throw error;
+        }
+    }
+
+    private async shutdownService(serviceName: ServiceName): Promise<void> {
+        try {
+            const service = this.getService(serviceName);
+            await service.shutdown();
+            this.state.activeServices.delete(serviceName);
+            this.state.serviceStates.set(serviceName, 'shutdown');
+            logger.debug(`${serviceName} service stopped`);
+        } catch (error) {
+            logger.error(`Error stopping ${serviceName} service:`, error);
+            throw this.createServiceError(serviceName, error);
         }
     }
 

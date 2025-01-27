@@ -8,6 +8,7 @@ import { EventEmitter } from 'events';
 import { PhoneController } from '../../controllers/phone-controller';
 import { IrohAIService } from '../ai/ai-service';
 import { logger } from '../../utils/logger';
+import { Service, ServiceStatus, ServiceState } from '../../types/services';
 
 interface TimerConfig {
     maxTimers: number;   // Maximum concurrent timers 
@@ -23,10 +24,11 @@ interface Timer {
     endTime?: Date;      // Human readable end time
 }
 
-export class TimerService extends EventEmitter {
+export class TimerService extends EventEmitter implements Service {
     private timers: Map<string, Timer>;
     private checkInterval: NodeJS.Timeout | null = null;
     private readonly config: Required<TimerConfig>;
+    private serviceStatus: ServiceStatus;
 
     constructor(
         config: Partial<TimerConfig>,
@@ -34,6 +36,11 @@ export class TimerService extends EventEmitter {
         private ai: IrohAIService
     ) {
         super();
+        this.serviceStatus = {
+            state: 'initializing',
+            isHealthy: false,
+            lastUpdate: new Date()
+        };
         
         // Set config with defaults
         this.config = {
@@ -51,6 +58,41 @@ export class TimerService extends EventEmitter {
             maxTimers: this.config.maxTimers,
             maxDuration: this.config.maxDuration 
         });
+    }
+
+    public async initialize(): Promise<void> {
+        try {
+            await this.start();
+            this.serviceStatus.state = 'ready';
+            this.serviceStatus.isHealthy = true;
+            this.serviceStatus.lastUpdate = new Date();
+        } catch (error) {
+            this.serviceStatus.state = 'error';
+            this.serviceStatus.isHealthy = false;
+            this.serviceStatus.lastError = error instanceof Error ? error : new Error(String(error));
+            this.serviceStatus.lastUpdate = new Date();
+            throw error;
+        }
+    }
+
+    public async shutdown(): Promise<void> {
+        try {
+            await this.stop();
+            this.serviceStatus.state = 'shutdown';
+            this.serviceStatus.isHealthy = false;
+            this.serviceStatus.lastUpdate = new Date();
+        } catch (error) {
+            this.serviceStatus.lastError = error instanceof Error ? error : new Error(String(error));
+            throw error;
+        }
+    }
+
+    public getStatus(): ServiceStatus {
+        return this.serviceStatus;
+    }
+
+    public isHealthy(): boolean {
+        return this.serviceStatus.isHealthy;
     }
 
     private setupVoiceCommands(): void {

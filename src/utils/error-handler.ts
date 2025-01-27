@@ -84,15 +84,23 @@ export class ErrorHandler extends EventEmitter {
         const severity = context.severity || this.classifyError(wrappedError);
 
         try {
-            logger.error('Error detected', createLogMetadata('error', context.component, {
-                error: wrappedError,
+            logger.error('Error detected', {
+                component: context.component,
+                type: 'error',
+                timestamp: new Date().toISOString(),
+                error: {
+                    message: wrappedError.message,
+                    name: wrappedError.name,
+                    stack: wrappedError.stack,
+                    code: isIrohError(wrappedError) ? wrappedError.code : undefined
+                },
                 severity,
-                context: {
+                details: {
                     operation: context.operation,
                     retryCount: context.retryCount,
                     isRecoverable: context.isRecoverable
                 }
-            }));
+            });
 
             // Increment retry count
             const retryKey = `${context.component}:${context.operation}`;
@@ -115,13 +123,22 @@ export class ErrorHandler extends EventEmitter {
             this.emit('error', { error: wrappedError, context });
 
         } catch (handlingError) {
-            logger.error('Error during error handling:', createLogMetadata('error', 'system', {
-                error: ensureError(handlingError),
-                context: {
+            const err = ensureError(handlingError);
+            logger.error('Error during error handling:', {
+                component: 'system',
+                type: 'error',
+                timestamp: new Date().toISOString(),
+                error: {
+                    message: err.message,
+                    name: err.name,
+                    stack: err.stack
+                },
+                severity: ErrorSeverity.HIGH,
+                details: {
                     originalError: wrappedError,
                     originalContext: context
                 }
-            }));
+            });
             this.emit('errorHandlingFailed', {
                 originalError: wrappedError,
                 handlingError: ensureError(handlingError)
@@ -134,13 +151,18 @@ export class ErrorHandler extends EventEmitter {
     }
 
     private async handleCriticalError(error: Error, context: ErrorContext): Promise<void> {
-        const errorData = isIrohError(error) 
-            ? { code: error.code, timestamp: error.timestamp }
-            : { code: 'UNKNOWN_ERROR' };
-
         logger.error('Critical error detected:', {
-            error: errorData,
-            context
+            component: context.component,
+            type: 'error',
+            timestamp: new Date().toISOString(),
+            error: {
+                message: error.message,
+                name: error.name,
+                code: isIrohError(error) ? error.code : undefined,
+                stack: error.stack
+            },
+            severity: ErrorSeverity.CRITICAL,
+            details: context
         });
 
         this.emit('criticalError', { error, context });
@@ -156,8 +178,16 @@ export class ErrorHandler extends EventEmitter {
 
     private async handleHighSeverityError(error: Error, context: ErrorContext): Promise<void> {
         logger.error('High severity error:', {
-            error,
-            context
+            component: context.component,
+            type: 'error',
+            timestamp: new Date().toISOString(),
+            error: {
+                message: error.message,
+                name: error.name,
+                stack: error.stack
+            },
+            severity: ErrorSeverity.HIGH,
+            details: context
         });
 
         const retryKey = `${context.component}:${context.operation}`;

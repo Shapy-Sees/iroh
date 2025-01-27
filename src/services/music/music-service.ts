@@ -6,13 +6,21 @@
 
 import { EventEmitter } from 'events';
 import { MusicService as IMusicService, MusicStatus } from '../../types';
+import { Service, ServiceStatus, ServiceState } from '../../types/services';
 import { logger } from '../../utils/logger';
 
-export class MusicService extends EventEmitter implements IMusicService {
+export class MusicService extends EventEmitter implements IMusicService, Service {
     private status: MusicStatus;
+    private serviceStatus: ServiceStatus;
 
     constructor(config: any) {
         super();
+        this.serviceStatus = {
+            state: 'initializing',
+            isHealthy: false,
+            lastUpdate: new Date()
+        };
+        
         logger.debug('Initializing stub MusicService');
         
         this.status = {
@@ -20,6 +28,46 @@ export class MusicService extends EventEmitter implements IMusicService {
             volume: 50,
             queue: 0
         };
+    }
+
+    public async initialize(): Promise<void> {
+        try {
+            // Initialize music service components here
+            this.serviceStatus.state = 'ready';
+            this.serviceStatus.isHealthy = true;
+            this.serviceStatus.lastUpdate = new Date();
+            logger.info('Music service initialized');
+        } catch (error) {
+            this.serviceStatus.state = 'error';
+            this.serviceStatus.isHealthy = false;
+            this.serviceStatus.lastError = error instanceof Error ? error : new Error(String(error));
+            this.serviceStatus.lastUpdate = new Date();
+            logger.error('Failed to initialize music service:', error);
+            throw error;
+        }
+    }
+
+    public async shutdown(): Promise<void> {
+        try {
+            // Cleanup code here
+            this.serviceStatus.state = 'shutdown';
+            this.serviceStatus.isHealthy = false;
+            this.serviceStatus.lastUpdate = new Date();
+            this.removeAllListeners();
+            logger.info('Music service shut down');
+        } catch (error) {
+            this.serviceStatus.lastError = error instanceof Error ? error : new Error(String(error));
+            logger.error('Error shutting down music service:', error);
+            throw error;
+        }
+    }
+
+    public getStatus(): ServiceStatus {
+        return this.serviceStatus;
+    }
+
+    public isHealthy(): boolean {
+        return this.serviceStatus.isHealthy;
     }
 
     public async executeCommand(command: string): Promise<void> {

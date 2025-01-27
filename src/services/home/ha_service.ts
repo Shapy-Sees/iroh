@@ -1,86 +1,105 @@
-// src/services/home/ha_service.ts
-//
-// Home Assistant service layer implementation
-// This service provides high-level interface for smart home control,
-// manages state caching, and handles real-time updates through the HA API.
-// It abstracts the Home Assistant complexity from the rest of the application.
-
 import { EventEmitter } from 'events';
 import { HAClient } from './ha_client';
-import { 
-    HAService, 
-    ServiceStatus, 
-    HAEvent, 
-    HAEntityStatus,
-    HAStateHandler,
-    ServiceError 
-} from '../../types/services';
-import { HomeConfig } from '../../types/core';
+import { Service, ServiceStatus } from '../../types/services';
+import { HomeConfig } from '../../types/services/home';
+import { logger } from '../../utils/logger';
 
 interface HAServiceEvents {
-    'state_changed': (event: HAEvent) => void;
+    'state_changed': (entityId: string, state: HAEntityStatus) => void;
     'ready': () => void;
-    'error': (error: ServiceError) => void;
+    'error': (error: Error) => void;
 }
 
-export class HAService extends EventEmitter implements HAService {
+interface HAEntityStatus {
+    entityId: string;
+    state: any;
+    attributes: Record<string, any>;
+    lastChanged: Date;
+}
+
+type HAStateHandler = (entityId: string, state: HAEntityStatus) => Promise<void>;
+
+export class HAService extends EventEmitter implements Service {
     private client: HAClient;
     private stateHandlers: Map<string, HAStateHandler[]> = new Map();
-    public readonly config: HomeConfig;
+    private status: ServiceStatus = { state: 'initializing' };
+    private updateInterval: NodeJS.Timer | null = null;
 
-    constructor(config: HomeConfig) {
+    constructor(public readonly config: HomeConfig) {
         super();
-        
-        this.config = {
-            entityPrefix: 'iroh_',
-            updateInterval: 5000,  // 5 seconds
-            cacheTimeout: 60000,   // 1 minute
-            ...config
-        };
-
-        // Initialize Home Assistant client
         this.client = new HAClient({
             url: config.url,
             token: config.token
-        });
-
-        // Initialize cache
-        this.cache = new Cache({
-            namespace: 'ha-states',
-            ttl: this.config.cacheTimeout
-        });
-
-        // Set up event handlers
-        this.setupEventHandlers();
-    }
-
-    private setupEventHandlers(): void {
-        this.client.on('connected', () => {
-            logger.info('Home Assistant service ready');
-            this.emit('ready');
-        });
-
-        this.client.on('connection_error', (error) => {
-            logger.error('Home Assistant connection error:', error);
-            this.emit('error', error);
         });
     }
 
     public async initialize(): Promise<void> {
         try {
             logger.info('Initializing Home Assistant service');
-            
-            // Connect to Home Assistant
+            this.status = { state: 'initializing' };
+
             await this.client.connect();
-            
-            // Start state updates
+            this.setupEventHandlers();
             this.startStateUpdates();
-            
-            logger.info('Home Assistant service initialized');
+
+            this.status = { state: 'ready' };
+            this.emit('ready');
         } catch (error) {
+            this.status = { state: 'error', error: error as Error };
             logger.error('Failed to initialize Home Assistant service:', error);
             throw error;
         }
+    }
+
+    private setupEventHandlers(): void {
+        this.client.on('connected', () => {
+            this.status = { state: 'ready' };
+            this.emit('ready');
+        });
+
+        this.client.on('connection_error', (error) => {
+            this.status = { state: 'error', error };
+            this.emit('error', error);
+        });
+    }
+
+    public async controlDevice(deviceId: string, command: string): Promise<void> {
+        try {
+            const [domain, service] = command.split('.');
+            if (!domain || !service) {
+                throw new Error(`Invalid command format: ${command}`);
+            }
+
+            await this.client.callService({
+                domain,
+                service,
+                target: { entity_id: deviceId }
+            });
+        } catch (error) {
+            logger.error('Error controlling device:', error);
+            throw error;
+        }
+    }
+
+    public async getEntityState(entityId: string): Promise<HAEntityStatus> {
+        try {
+            const state = await this.client.getState(entityId);
+            return {
+                entityId: state.entity_id,
+                state: state.state,
+                attributes: state.attributes,
+                lastChanged: new Date(state.last_changed)
+            };
+        } catch (error) {
+            logger.error('Error getting entity state:', error);
+            throw error;
+        }
+    }
+
+    public onEntityState(entityId: string, handler: HAStateHandler): void {
+        const handlers = this.stateHandlers.get(entityId) || [];
+        handlers.push(handler);
+        this.stateHandlers.set(entityId, handlers);
     }
 
     private startStateUpdates(): void {
@@ -90,143 +109,54 @@ export class HAService extends EventEmitter implements HAService {
 
         this.updateInterval = setInterval(async () => {
             try {
-                await this.updateStates();
+                const states = await this.client.getAllStates();
+                for (const state of states) {
+                    await this.processStateUpdate(state);
+                }
             } catch (error) {
                 logger.error('Error updating states:', error);
             }
-        }, this.config.updateInterval);
+        }, this.config.updateInterval || 5000);
     }
 
-    private async updateStates(): Promise<void> {
-        const states = await this.client.getAllStates();
-        
-        for (const state of states) {
-            // Only process our entities
-            if (state.entity_id.startsWith(this.config.entityPrefix)) {
-                const cached = await this.cache.get<HAEntity>(state.entity_id);
-                
-                // Check if state has changed
-                if (!cached || cached.state !== state.state) {
-                    await this.cache.set(state.entity_id, state);
-                    await this.notifyStateHandlers(state.entity_id, state);
-                }
-            }
-        }
-    }
+    private async processStateUpdate(state: any): Promise<void> {
+        const handlers = this.stateHandlers.get(state.entity_id) || [];
+        const status: HAEntityStatus = {
+            entityId: state.entity_id,
+            state: state.state,
+            attributes: state.attributes,
+            lastChanged: new Date(state.last_changed)
+        };
 
-    public async getEntityState(entityId: string): Promise<HAEntity | null> {
-        try {
-            // Check cache first
-            const cached = await this.cache.get<HAEntity>(entityId);
-            if (cached) return cached;
-
-            // Get fresh state from HA
-            const state = await this.client.getState(entityId);
-            await this.cache.set(entityId, state);
-            return state;
-        } catch (error) {
-            logger.error('Error getting entity state:', error);
-            return null;
-        }
-    }
-
-    public async executeCommand(command: string, params?: Record<string, any>): Promise<void> {
-        logger.info('Executing Home Assistant command', { command, params });
-
-        try {
-            // Parse command into domain and service
-            const [domain, service] = command.split('.');
-            if (!domain || !service) {
-                throw new Error(`Invalid command format: ${command}`);
-            }
-
-            const serviceCall: HAServiceCall = {
-                domain,
-                service,
-                service_data: params
-            };
-
-            await this.client.callService(serviceCall);
-            logger.debug('Command executed successfully', { command });
-        } catch (error) {
-            logger.error('Error executing command:', error);
-            throw error;
-        }
-    }
-
-    public onEntityState(entityId: string, handler: EntityStateHandler): void {
-        const handlers = this.stateHandlers.get(entityId) || [];
-        handlers.push(handler);
-        this.stateHandlers.set(entityId, handlers);
-    }
-
-    private async notifyStateHandlers(entityId: string, state: HAEntity): Promise<void> {
-        const handlers = this.stateHandlers.get(entityId) || [];
-        
         for (const handler of handlers) {
             try {
-                await handler(entityId, state);
+                await handler(state.entity_id, status);
             } catch (error) {
                 logger.error('Error in state handler:', error);
             }
         }
 
-        // Emit change event
-        this.emit('state_changed', {
-            entityId,
-            state
-        });
-    }
-
-    public async turnOn(entityId: string): Promise<void> {
-        await this.executeCommand('homeassistant.turn_on', {
-            entity_id: entityId
-        });
-    }
-
-    public async turnOff(entityId: string): Promise<void> {
-        await this.executeCommand('homeassistant.turn_off', {
-            entity_id: entityId
-        });
-    }
-
-    public async setLight(entityId: string, params: {
-        brightness?: number;
-        color?: string;
-        effect?: string;
-    }): Promise<void> {
-        await this.executeCommand('light.turn_on', {
-            entity_id: entityId,
-            ...params
-        });
-    }
-
-    public async activateScene(sceneId: string): Promise<void> {
-        await this.executeCommand('scene.turn_on', {
-            entity_id: sceneId
-        });
+        this.emit('state_changed', state.entity_id, status);
     }
 
     public getStatus(): ServiceStatus {
-        return {
-            state: this.client.isHealthy() ? 'ready' : 'error',
-            isHealthy: this.client.isHealthy(),
-            lastUpdate: new Date(),
-            metrics: {
-                uptime: process.uptime(),
-                errors: 0
-            }
-        };
+        return this.status;
     }
 
-    public async getEntityStatus(entityId: string): Promise<HAEntityStatus> {
-        const state = await this.client.getState(entityId);
-        return {
-            entityId,
-            state: state.state,
-            attributes: state.attributes,
-            lastChanged: new Date(state.last_changed)
-        };
+    public isHealthy(): boolean {
+        return this.status.state === 'ready' && this.client.isHealthy();
+    }
+
+    public async shutdown(): Promise<void> {
+        logger.info('Shutting down Home Assistant service');
+        if (this.updateInterval) {
+            clearInterval(this.updateInterval);
+            this.updateInterval = null;
+        }
+
+        await this.client.shutdown();
+        this.removeAllListeners();
+        this.status = { state: 'shutdown' };
     }
 
     // Type-safe event emitter
@@ -242,22 +172,5 @@ export class HAService extends EventEmitter implements HAService {
         listener: HAServiceEvents[K]
     ): this {
         return super.on(event, listener);
-    }
-
-    public async shutdown(): Promise<void> {
-        logger.info('Shutting down Home Assistant service');
-
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
-        }
-
-        await this.client.shutdown();
-        await this.cache.shutdown();
-        this.removeAllListeners();
-    }
-
-    public isHealthy(): boolean {
-        return this.client.isHealthy();
     }
 }

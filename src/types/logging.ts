@@ -43,9 +43,9 @@ export type LogMetadataType =
 // Base metadata interface with required fields
 export interface BaseLogMetadata {
     component: LogComponent;
-    timestamp: string;
     type: LogMetadataType;
-    context?: Record<string, unknown>;
+    timestamp: string;
+    details?: Record<string, unknown>;
     severity?: ErrorSeverity;
 }
 
