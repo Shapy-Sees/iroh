@@ -6,26 +6,21 @@
 
 import { Buffer } from 'buffer';
 
-// Export core types
+// Re-export all type definitions
+
+// Core types and interfaces
 export * from './core';
+
+// Error handling
 export * from './errors';
+
+// Logging system
 export * from './logging';
 
-// Export service types
+// Service related types
 export * from './services';
 
-// Export hardware types
-export * from './hardware/audio';
-export * from './hardware/dahdi';
-export * from './hardware/fxs';
+// Hardware related types
+export * from './hardware';
 
-// Export specific interfaces
-export interface Config {
-    app: AppConfig;
-    audio: AudioConfig;
-    logging: LogConfig;
-    services: ServiceConfig;
-}
-
-// Remove duplicate interface definitions and use imports
-export type { AppConfig, AudioConfig, ServiceConfig } from './core';
+// Note: Remove duplicate interface definitions as they're now properly exported from core.ts

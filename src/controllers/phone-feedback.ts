@@ -1,5 +1,7 @@
+import { AudioFormat } from '../types';
+
 export class PhoneFeedback {
-    private readonly dahdiFormat: DAHDIAudioFormat = {
+    private readonly audioFormat: AudioFormat = {
         sampleRate: 8000,
         channels: 1,
         bitDepth: 16,
@@ -21,7 +23,7 @@ export class PhoneFeedback {
         try {
             // Generate speech with DAHDI format requirements
             const audio = await this.ai.generateSpeech(text, {
-                format: this.dahdiFormat
+                format: this.audioFormat
             });
 
             // Ensure DAHDI compatibility

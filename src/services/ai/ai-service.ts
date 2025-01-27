@@ -12,6 +12,8 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { ConversationManager } from './conversation-manager';
 import { Cache } from '../../utils/cache';
+import { IrohAIService, ServiceStatus, ServiceError } from '../../types/services';
+import { AIConfig } from '../../types/core';
 
 // Define the base interface
 export interface AIService {
@@ -36,9 +38,19 @@ interface StreamingConfig {
     maxStreamDuration: number;  // Maximum streaming duration in ms
 }
 
-export class IrohAIService extends EventEmitter implements AIService {
+interface AIServiceEvents {
+    textChunk: (text: string) => void;
+    streamComplete: () => void;
+    streamPause: () => void;
+    streamResume: () => void;
+    streamStop: () => void;
+    error: (error: ServiceError) => void;
+}
+
+export class IrohAIService extends EventEmitter implements IrohAIService {
     private client: Anthropic;
     private isInitialized: boolean = false;
+    public readonly config: AIConfig;
     private streamingConfig: StreamingConfig;
     private cache: Cache;
     private conversationManager: ConversationManager;
@@ -225,5 +237,32 @@ export class IrohAIService extends EventEmitter implements AIService {
 
     public stopStream(): void {
         this.emit('streamStop');
+    }
+
+    public getStatus(): ServiceStatus {
+        return {
+            state: this.isInitialized ? 'ready' : 'initializing',
+            isHealthy: this.isInitialized,
+            lastUpdate: new Date(),
+            metrics: {
+                uptime: process.uptime(),
+                errors: 0
+            }
+        };
+    }
+
+    // Type-safe event emitter
+    emit<K extends keyof AIServiceEvents>(
+        event: K, 
+        ...args: Parameters<AIServiceEvents[K]>
+    ): boolean {
+        return super.emit(event, ...args);
+    }
+
+    on<K extends keyof AIServiceEvents>(
+        event: K, 
+        listener: AIServiceEvents[K]
+    ): this {
+        return super.on(event, listener);
     }
 }

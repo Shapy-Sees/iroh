@@ -10,6 +10,21 @@ export interface Result<T, E = Error> {
     metadata?: Record<string, unknown>;
 }
 
+// Cache related types
+export interface CacheOptions {
+    ttl?: number;
+    namespace?: string;
+    maxSize?: number;
+    persistToDisk?: boolean;
+}
+
+export interface CacheConfig extends BaseConfig {
+    defaultTTL: number;
+    maxSize: number;
+    persistToDisk: boolean;
+    directory?: string;
+}
+
 // Base configuration and status interfaces
 export interface BaseConfig {
     enabled?: boolean;
@@ -22,6 +37,32 @@ export interface BaseStatus {
     lastError?: Error;
     metadata?: Record<string, unknown>;
 }
+
+// Audio configuration
+export interface AudioConfig {
+    sampleRate: number;
+    channels: number;
+    bitDepth: number;
+    bufferSize?: number;
+    vadThreshold?: number;
+    silenceThreshold?: number;
+    noiseReduction?: boolean;
+    echoCancellation?: boolean;
+}
+
+// Logging configuration
+export interface LogConfig {
+    level: LogLevel;
+    file?: string;
+    console: boolean;
+    format?: 'json' | 'text';
+    maxFiles?: number;
+    maxSize?: string;
+    directory?: string;
+    timestamps?: boolean;
+}
+
+export type LogLevel = typeof LOG_LEVELS[number];
 
 // Service configuration interfaces
 export interface AIConfig extends BaseConfig {
@@ -75,15 +116,14 @@ export interface Config {
     music: MusicConfig;
     home: HomeConfig;
     logging: LogConfig;
+    cache: CacheConfig;
 }
 
-export interface LogConfig {
-    level: LogLevel;
-    file?: string;
-    console: boolean;
-    format?: 'json' | 'text';
-    maxFiles?: number;
-    maxSize?: string;
+export interface ServiceConfig extends BaseConfig {
+    app: AppConfig;
+    hardware: HardwareConfig;
+    logging: LogConfig;
+    cache: CacheConfig;
 }
 
 // Event system types
@@ -118,9 +158,6 @@ export interface DiagnosticResult {
     timestamp?: number;
 }
 
-// Logging types
-export type LogLevel = typeof LOG_LEVELS[number];
-
 // Hardware event interface
 export interface HardwareEvent extends BaseEvent {
     deviceId: string;
@@ -129,19 +166,6 @@ export interface HardwareEvent extends BaseEvent {
 }
 
 // Re-export essential types
-export * from './errors';
-export type { LogLevel, LogMetadata } from './logging';
+export { ErrorSeverity } from './errors';
+export type { LogMetadata } from './logging';
 export type { HardwareConfig } from './hardware-config';
-
-export interface AudioConfig {
-    sampleRate: number;
-    channels: number;
-    bitDepth: number;
-    bufferSize?: number;
-}
-
-export interface ServiceConfig extends BaseConfig {
-    app: AppConfig;
-    hardware: HardwareConfig; 
-    logging: LogConfig;
-}

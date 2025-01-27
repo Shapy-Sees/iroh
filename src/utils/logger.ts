@@ -19,7 +19,8 @@ import {
     isAudioMetadata,
     isServiceMetadata,
     isCommandMetadata,
-    isStateMetadata
+    isStateMetadata,
+    ErrorLogMetadata
 } from '../types/logging';
 
 export class Logger {
@@ -97,7 +98,7 @@ export class Logger {
         });
     }
 
-    public error(message: string, metadata?: Partial<ErrorLogMetadata>): void {
+    public error(message: string, metadata: Partial<ErrorLogMetadata>): void {
         const enrichedMetadata = this.enrichMetadata('error', metadata) as ErrorLogMetadata;
         if (!validateMetadata(enrichedMetadata)) {
             console.error('Invalid error metadata:', enrichedMetadata);
@@ -107,19 +108,25 @@ export class Logger {
         this.logger.error(message, enrichedMetadata);
     }
 
-    public warn(message: string, metadata?: LogMetadata): void {
+    public warn(message: string, metadata?: Partial<LogMetadata>): void {
         const enrichedMetadata = this.enrichMetadata('warn', metadata);
-        this.logger.warn(message, enrichedMetadata);
+        if (validateMetadata(enrichedMetadata)) {
+            this.logger.warn(message, enrichedMetadata);
+        }
     }
 
-    public info(message: string, metadata?: LogMetadata): void {
+    public info(message: string, metadata?: Partial<LogMetadata>): void {
         const enrichedMetadata = this.enrichMetadata('info', metadata);
-        this.logger.info(message, enrichedMetadata);
+        if (validateMetadata(enrichedMetadata)) {
+            this.logger.info(message, enrichedMetadata);
+        }
     }
 
-    public debug(message: string, metadata?: LogMetadata): void {
+    public debug(message: string, metadata?: Partial<LogMetadata>): void {
         const enrichedMetadata = this.enrichMetadata('debug', metadata);
-        this.logger.debug(message, enrichedMetadata);
+        if (validateMetadata(enrichedMetadata)) {
+            this.logger.debug(message, enrichedMetadata);
+        }
     }
 
     private enrichMetadata(level: LogLevel, metadata?: Partial<LogMetadata>): LogMetadata {

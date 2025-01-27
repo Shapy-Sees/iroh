@@ -11,7 +11,7 @@ export interface FXSConfig {
     /** DAHDI device configuration */
     fxs: Omit<DAHDIConfig, 'controlPath'> & {
         /** Optional line impedance (600Ω or 900Ω) */
-        impedance?: number;
+        impedance?: 600 | 900;
     };
     /** Audio processing configuration */
     audio: AudioConfig;

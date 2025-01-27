@@ -142,3 +142,21 @@ export interface AudioConverterOptions {
     bufferSize?: number;
     format?: Partial<DAHDIAudioFormat>;
 }
+
+// Add DAHDIConfig interface
+export interface DAHDIConfig extends BaseConfig {
+    devicePath: string;
+    controlPath: string;
+    sampleRate: 8000;
+    channels: 1;
+    bitDepth: 16;
+    bufferSize: number;
+    channel: number;
+    monitorInterval?: number;
+    audio?: {
+        echoCancellation?: {
+            enabled: boolean;
+            taps: number;
+        };
+    };
+}

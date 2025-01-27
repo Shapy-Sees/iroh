@@ -19,6 +19,7 @@ export interface AudioInput {
     channels: number;
     bitDepth: number;
     data: Buffer;
+    format?: string;
 }
 
 export interface AudioOutput {
@@ -49,6 +50,7 @@ export interface AudioFormat {
     channels: number;
     bitDepth: number;
     format?: 'linear' | 'alaw' | 'ulaw';
+    encoding?: string;
 }
 
 export function isValidAudioFormat(format: Partial<AudioFormat>): format is AudioFormat {

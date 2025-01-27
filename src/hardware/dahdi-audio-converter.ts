@@ -11,21 +11,17 @@ import { AudioBuffer } from 'audiobuffer-to-wav';
 import { logger } from '../utils/logger';
 import { 
     DAHDIAudioFormat, 
-    DAHDIError,
-    HardwareError 
-} from '../types/hardware/dahdi';
-import {
-    AudioError,
-    AudioFormatError,
     AudioFormat,
-    isValidAudioFormat
-} from '../types/hardware/audio';
+    AudioError,
+    AudioFormatError
+} from '../types/hardware';
 
 interface AudioConverterOptions {
     /** Buffer size for processing */
     bufferSize?: number;
     /** Whether to use worker threads for conversion */
     useWorkers?: boolean;
+    format?: Partial<DAHDIAudioFormat>;
 }
 
 interface ConverterConfig {

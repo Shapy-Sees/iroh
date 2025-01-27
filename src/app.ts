@@ -9,15 +9,12 @@ import { ServiceManager } from './services/service-manager';
 import { TimerService } from './services/timer/timer-service';
 import { HardwareService } from './services/hardware/hardware-service';
 import { 
-    Config, 
-    FXSConfig, 
-    AppConfig,
-    AIConfig,
-    MusicConfig,
-    HomeConfig,
-    LogConfig,
+    Config,
+    AudioFormat,
+    PhoneConfig,
+    ServiceConfig,
     HardwareEvent 
-} from './types/core';
+} from './types';
 import { HardwareConfig } from './types/hardware-config';  // Updated import
 import { config } from './config';
 import { logger } from './utils/logger';
@@ -30,29 +27,26 @@ export class IrohApp {
     private hardwareService!: HardwareService;
 
     constructor() {
-        // Create phone controller config with proper FXS types
-        const phoneConfig: FXSConfig = {
-            fxs: {
-                devicePath: process.env.DAHDI_DEVICE_PATH || DAHDI_CONSTANTS.DEVICE_PATH,
-                sampleRate: DAHDI_CONSTANTS.SAMPLE_RATE,
-                impedance: DAHDI_CONSTANTS.LINE_IMPEDANCE,
-                channel: parseInt(process.env.DAHDI_CHANNEL || '1')
+        const audioFormat: AudioFormat = {
+            sampleRate: 8000,
+            channels: 1,
+            bitDepth: 16,
+            format: 'linear'
+        };
+
+        const phoneConfig: PhoneConfig = {
+            hardware: {
+                devicePath: config.hardware.dahdi.devicePath,
+                audioFormat,
+                channel: config.hardware.dahdi.channel.number
             },
             audio: {
-                bufferSize: DAHDI_CONSTANTS.BUFFER_SIZE,
-                channels: DAHDI_CONSTANTS.CHANNELS,
-                bitDepth: DAHDI_CONSTANTS.BIT_DEPTH,
-                vadThreshold: config.audio.vadThreshold
-            },
-            ai: {
-                model: 'claude-3-opus-20240229',
-                apiKey: config.ai.anthropicKey,
-                temperature: config.ai.temperature
+                ...config.hardware.audio,
+                format: audioFormat
             }
         };
 
-        // Create complete config for service manager
-        const serviceConfig: Config = {
+        const serviceConfig: ServiceConfig = {
             app: config.app,
             audio: config.audio,
             ai: {
@@ -98,9 +92,9 @@ export class IrohApp {
         };
     }
 
-    private initializeServices(phoneConfig: FXSConfig, serviceConfig: Config): void {
+    private initializeServices(phoneConfig: PhoneConfig, serviceConfig: ServiceConfig): void {
         // Initialize hardware service
-        this.hardwareService = new HardwareService(phoneConfig.fxs);
+        this.hardwareService = new HardwareService(phoneConfig.hardware);
 
         // Initialize phone controller
         this.phoneController = new PhoneController(phoneConfig);

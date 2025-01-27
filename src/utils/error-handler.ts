@@ -84,11 +84,14 @@ export class ErrorHandler extends EventEmitter {
         const severity = context.severity || this.classifyError(wrappedError);
 
         try {
-            // Log the error with properly typed metadata
             logger.error('Error detected', createLogMetadata('error', context.component, {
                 error: wrappedError,
-                context,
-                severity
+                severity,
+                context: {
+                    operation: context.operation,
+                    retryCount: context.retryCount,
+                    isRecoverable: context.isRecoverable
+                }
             }));
 
             // Increment retry count

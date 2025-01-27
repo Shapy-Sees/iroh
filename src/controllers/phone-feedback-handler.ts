@@ -15,7 +15,7 @@ import { ErrorMessages } from '../utils/error-messages';
 import { logger } from '../utils/logger';
 import { EVENTS, TIMEOUTS } from '../core/constants';
 import { ServiceError } from '../types/core';
-import { ErrorSeverity, ErrorContext } from '../types';
+import { ErrorSeverity, ErrorContext, AudioFormat, FeedbackEvent } from '../types';
 
 interface FeedbackOptions {
     /** Whether to play audio tones */
@@ -194,16 +194,17 @@ export class PhoneFeedbackHandler extends EventEmitter {
     }
 
     private async playAudio(audio: Buffer): Promise<void> {
+        const format: AudioFormat = {
+            sampleRate: 8000,
+            channels: 1,
+            bitDepth: 16,
+            format: 'linear'
+        };
+
         try {
-            // Play through DAHDI interface
-            await this.dahdi.playAudio(audio, {
-                sampleRate: 8000,  // DAHDI requires 8kHz
-                channels: 1,       // DAHDI is mono
-                bitDepth: 16,      // DAHDI uses 16-bit PCM
-                format: 'linear'   // Linear PCM format
-            });
+            await this.dahdi.playAudio(audio, format);
         } catch (error) {
-            logger.error('Error playing audio through DAHDI:', error);
+            logger.error('Error playing audio:', error);
             throw error;
         }
     }
@@ -262,5 +263,10 @@ export class PhoneFeedbackHandler extends EventEmitter {
         }
         this.isPlaying = false;
         this.emit(EVENTS.SYSTEM.INTERRUPT);
+    }
+
+    // Add type-safe event emission
+    public emit(event: FeedbackEvent, ...args: any[]): boolean {
+        return super.emit(event, ...args);
     }
 }

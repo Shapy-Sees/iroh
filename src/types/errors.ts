@@ -12,9 +12,11 @@ export enum ErrorSeverity {
 export interface ErrorContext {
     component: string;
     operation: string;
-    severity?: ErrorSeverity;
+    severity: ErrorSeverity;
+    retryCount?: number;
+    isRecoverable?: boolean;
+    metadata?: Record<string, unknown>;
     timestamp?: Date;
-    metadata?: Record<string, any>;
 }
 
 export interface ErrorDetails {

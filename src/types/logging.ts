@@ -15,12 +15,14 @@ export type LogComponent = 'hardware' | 'audio' | 'service' | 'system' | 'ai' | 
 // Base metadata interface with required fields
 export interface BaseLogMetadata {
     component: LogComponent;
-    timestamp?: string;
+    timestamp: string;
+    type: LogMetadataType;
     context?: Record<string, unknown>;
     operation?: string;
     severity?: ErrorSeverity;
-    type: string;
 }
+
+export type LogMetadataType = 'error' | 'hardware' | 'audio' | 'service' | 'command' | 'state';
 
 // Specific metadata interfaces extending base
 export interface ErrorLogMetadata extends BaseLogMetadata {
@@ -160,13 +162,15 @@ export const validateMetadata = (metadata: LogMetadata): boolean => {
 };
 
 // New helper for creating metadata
-export const createLogMetadata = <T extends LogMetadata>(
-    type: T['type'],
+export function createLogMetadata<T extends LogMetadataType>(
+    type: T,
     component: LogComponent,
-    data: Omit<T, 'type' | 'component' | 'timestamp'>
-): T => ({
-    type,
-    component,
-    timestamp: new Date().toISOString(),
-    ...data
-} as T);
+    data: Partial<Extract<LogMetadata, { type: T }>>
+): Extract<LogMetadata, { type: T }> {
+    return {
+        type,
+        component,
+        timestamp: new Date().toISOString(),
+        ...data
+    } as Extract<LogMetadata, { type: T }>;
+}

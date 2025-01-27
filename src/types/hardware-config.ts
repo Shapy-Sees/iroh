@@ -4,7 +4,8 @@
 
 import { BaseConfig } from './core';
 import { DAHDI_CONSTANTS } from '../config/constants';
-import { AudioFormat } from './hardware/audio';
+import { AudioConfig } from './hardware/audio';
+import { DAHDIConfig } from './hardware/dahdi';
 import { FXSConfig } from './hardware/fxs';
 
 export enum HardwareState {
@@ -19,6 +20,10 @@ export interface HardwareConfig extends BaseConfig {
     audio: AudioConfig;
     fxs?: FXSConfig;
 }
+
+export { DAHDIConfig } from './hardware/dahdi';
+export { AudioConfig, AudioFormat } from './hardware/audio';
+export { FXSConfig } from './hardware/fxs';
 
 export interface DAHDIConfig extends BaseConfig {
     devicePath: string;

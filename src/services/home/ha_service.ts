@@ -7,25 +7,28 @@
 
 import { EventEmitter } from 'events';
 import { HAClient } from './ha_client';
-import { Cache } from '../../utils/cache';
-import { logger } from '../../utils/logger';
-import { Service, ServiceStatus } from '../../types/services';
 import { 
-    HAEntity, 
-    HAConfig, 
-    HAServiceCall,
-} from './types';
+    HAService, 
+    ServiceStatus, 
+    HAEvent, 
+    HAEntityStatus,
+    HAStateHandler,
+    ServiceError 
+} from '../../types/services';
+import { HomeConfig } from '../../types/core';
 
-type EntityStateHandler = (entityId: string, state: HAEntity) => Promise<void>;
+interface HAServiceEvents {
+    'state_changed': (event: HAEvent) => void;
+    'ready': () => void;
+    'error': (error: ServiceError) => void;
+}
 
-export class HAService extends EventEmitter implements Service {
+export class HAService extends EventEmitter implements HAService {
     private client: HAClient;
-    private cache: Cache;
-    private updateInterval: NodeJS.Timeout | null = null;
-    private stateHandlers: Map<string, EntityStateHandler[]> = new Map();
-    private readonly config: Required<HAServiceConfig>;
+    private stateHandlers: Map<string, HAStateHandler[]> = new Map();
+    public readonly config: HomeConfig;
 
-    constructor(config: HAServiceConfig) {
+    constructor(config: HomeConfig) {
         super();
         
         this.config = {
@@ -208,8 +211,37 @@ export class HAService extends EventEmitter implements Service {
         return {
             state: this.client.isHealthy() ? 'ready' : 'error',
             isHealthy: this.client.isHealthy(),
-            lastUpdate: new Date()
+            lastUpdate: new Date(),
+            metrics: {
+                uptime: process.uptime(),
+                errors: 0
+            }
         };
+    }
+
+    public async getEntityStatus(entityId: string): Promise<HAEntityStatus> {
+        const state = await this.client.getState(entityId);
+        return {
+            entityId,
+            state: state.state,
+            attributes: state.attributes,
+            lastChanged: new Date(state.last_changed)
+        };
+    }
+
+    // Type-safe event emitter
+    emit<K extends keyof HAServiceEvents>(
+        event: K, 
+        ...args: Parameters<HAServiceEvents[K]>
+    ): boolean {
+        return super.emit(event, ...args);
+    }
+
+    on<K extends keyof HAServiceEvents>(
+        event: K, 
+        listener: HAServiceEvents[K]
+    ): this {
+        return super.on(event, listener);
     }
 
     public async shutdown(): Promise<void> {

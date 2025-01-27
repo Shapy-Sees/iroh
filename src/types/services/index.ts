@@ -3,9 +3,8 @@
 import { BaseConfig, BaseStatus, AIConfig, HomeConfig, MusicConfig } from '../core';
 import { HardwareConfig } from '../hardware';
 import { AudioBuffer } from '../hardware/audio';
-import { ServiceError } from '../errors';
 
-// Service interfaces
+// Base Service interface
 export interface Service {
     initialize(): Promise<void>;
     shutdown(): Promise<void>;
@@ -13,43 +12,51 @@ export interface Service {
     isHealthy(): boolean;
 }
 
-export interface ServiceStatus {
+export interface ServiceStatus extends BaseStatus {
     state: ServiceState;
     isHealthy: boolean;
-    lastError?: Error;
+    lastError?: ServiceError;
     lastUpdate?: Date;
 }
 
 export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
 
-export interface ServiceConfig extends BaseConfig {
-    app: {
-        name: string;
-        env: string;
-        port: number;
-    };
-    hardware: HardwareConfig;
-    logging: {
-        level: string;
-        directory: string;
-        maxFiles: string;
-        maxSize: string;
-    };
+export interface ServiceError extends Error {
+    name: 'ServiceError';
+    serviceName: string;
+    severity: 'low' | 'medium' | 'high';
+    timestamp: Date;
 }
 
 // Service-specific interfaces
 export interface IrohAIService extends Service {
     processText(text: string): Promise<string>;
     generateSpeech(text: string): Promise<AudioBuffer>;
-    isHealthy(): boolean;
+    processTextStreaming(text: string): Promise<void>;
     config: AIConfig;
 }
 
 export interface HAService extends Service {
     controlDevice(deviceId: string, command: string): Promise<void>;
-    getEntityStatus(entityId: string): Promise<any>;
-    isHealthy(): boolean;
+    getEntityStatus(entityId: string): Promise<HAEntityStatus>;
+    onEntityState(entityId: string, handler: HAStateHandler): void;
     config: HomeConfig;
+}
+
+export interface HAEntityStatus {
+    entityId: string;
+    state: any;
+    attributes: Record<string, any>;
+    lastChanged: Date;
+}
+
+export type HAStateHandler = (entityId: string, state: HAEntityStatus) => Promise<void>;
+
+export interface HAEvent {
+    type: 'state_changed' | 'service_call';
+    entityId: string;
+    state: HAEntityStatus;
+    timestamp: Date;
 }
 
 export interface MusicService extends Service {
@@ -77,7 +84,7 @@ export interface HardwareService extends Service {
     config: HardwareConfig;
 }
 
-// Service registry type
+// Service registry and config types
 export interface ServiceRegistry {
     ai: IrohAIService;
     home: HAService;
@@ -88,7 +95,25 @@ export interface ServiceRegistry {
 
 export type ServiceName = keyof ServiceRegistry;
 
-// Re-export service-specific configs
+export interface ServiceConfig extends BaseConfig {
+    app: {
+        name: string;
+        env: string;
+        port: number;
+    };
+    hardware: HardwareConfig;
+    logging: {
+        level: string;
+        directory: string;
+        maxFiles: string;
+        maxSize: string;
+    };
+    ai: AIConfig;
+    home: HomeConfig;
+    music: MusicConfig;
+}
+
+// Additional type exports
 export * from './ai';
 export * from './home';
 export * from './music';

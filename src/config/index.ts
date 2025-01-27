@@ -15,6 +15,14 @@ import { ConfigurationError, ServiceConfig } from '../types/core';
 // Load environment variables
 dotenv.config();
 
+// Audio format schema
+const AudioFormatSchema = z.object({
+  sampleRate: z.number().default(8000),
+  channels: z.number().default(1),
+  bitDepth: z.number().default(16),
+  format: z.enum(['linear', 'alaw', 'ulaw']).default('linear')
+});
+
 // Configuration schema with type validation
 const ConfigSchema = z.object({
     app: z.object({
@@ -25,6 +33,7 @@ const ConfigSchema = z.object({
     hardware: z.object({
         dahdi: z.object({
             devicePath: z.string().default('/dev/dahdi/channel001'),
+            audioFormat: AudioFormatSchema,
             sampleRate: z.literal(8000),
             channel: z.object({
                 number: z.number().min(1).default(1),
@@ -59,10 +68,7 @@ const ConfigSchema = z.object({
                 traceDahdi: z.boolean().default(false),
             }).default({}),
         }),
-        audio: z.object({
-            sampleRate: z.literal(8000), // DAHDI requires 8kHz
-            channels: z.literal(1),      // DAHDI uses mono
-            bitDepth: z.literal(16),     // DAHDI uses 16-bit PCM
+        audio: AudioFormatSchema.extend({
             vadThreshold: z.number().min(0).max(1).default(0.3),
             silenceThreshold: z.number().min(100).max(2000).default(500),
         }),
@@ -92,7 +98,8 @@ const ConfigSchema = z.object({
 });
 
 // Type inference from schema
-type Config = z.infer<typeof ConfigSchema>;
+export type AudioFormat = z.infer<typeof AudioFormatSchema>;
+export type Config = z.infer<typeof ConfigSchema>;
 
 function loadConfig(): ServiceConfig {
     const env = process.env.NODE_ENV || 'development';
