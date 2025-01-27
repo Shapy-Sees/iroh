@@ -5,6 +5,9 @@
 // events, and common data structures.
 
 import { LogLevel } from './logging';
+import { AudioFormat } from './hardware/audio';
+import { DAHDIConfig } from './hardware/dahdi';
+import { AIConfig, HomeConfig, MusicConfig } from './services';
 
 // Basic service states and status
 export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
@@ -35,35 +38,16 @@ export interface AudioConfig {
 }
 
 // AI service configuration
-export interface AIConfig extends BaseConfig {
+export interface AIServiceConfig extends BaseConfig {
     anthropicKey: string;
     elevenLabsKey?: string;
-    openAIKey?: string;
     maxTokens?: number;
     temperature?: number;
     voiceId?: string;
-    models?: {
-        default: string;
-        chat: string;
-        embedding: string;
-    };
-}
-
-// Home Assistant configuration
-export interface HomeConfig extends BaseConfig {
-    url: string;
-    token: string;
-    entityPrefix?: string;
-    updateInterval?: number;
-    homekitBridge?: {
-        pin: string;
-        name: string;
-        port: number;
-    };
 }
 
 // Music service configuration
-export interface MusicConfig extends BaseConfig {
+export interface MusicServiceConfig extends BaseConfig {
     spotifyClientId?: string;
     spotifyClientSecret?: string;
     defaultVolume?: number;
@@ -73,28 +57,10 @@ export interface MusicConfig extends BaseConfig {
 // Timer service configuration
 export interface TimerConfig extends BaseConfig {
     maxTimers: number;
-    maxDuration: number;
+    maxDuration: number; // in minutes
 }
 
-// Logging configuration
-export interface LogConfig {
-    level: LogLevel;
-    directory: string;
-    maxFiles: string;
-    maxSize: string;
-    console?: boolean;
-    timestamps?: boolean;
-}
-
-// Cache configuration
-export interface CacheOptions {
-    ttl?: number;
-    namespace?: string;
-    maxSize?: number;
-    persistToDisk?: boolean;
-}
-
-// Main service configuration
+// Overall service configuration
 export interface ServiceConfig {
     app: {
         name: string;
@@ -112,11 +78,42 @@ export interface ServiceConfig {
     cache: CacheOptions;
 }
 
+// Logging configuration
+export interface LogConfig {
+    level: LogLevel;
+    directory: string;
+    maxFiles: string;
+    maxSize: string;
+    console?: boolean;
+    timestamps?: boolean;
+    format?: {
+        colors?: boolean;
+        json?: boolean;
+        prettyPrint?: boolean;
+    };
+}
+
+// Cache configuration
+export interface CacheOptions {
+    ttl?: number;
+    namespace?: string;
+    maxSize?: number;
+    persistToDisk: boolean;
+}
+
 // Event system types
 export interface BaseEvent {
     type: string;
     timestamp: number;
     metadata?: Record<string, unknown>;
+}
+
+// Cache events
+export interface CacheEvents {
+    set: (data: { key: string; value: any }) => void;
+    delete: (data: { key: string }) => void;
+    clear: () => void;
+    expire: (data: { key: string }) => void;
 }
 
 // Result type for operations
@@ -133,13 +130,6 @@ export interface CacheItem<T> {
     expires: number;
 }
 
-export interface CacheEvents {
-    set: (data: { key: string; value: any }) => void;
-    delete: (data: { key: string }) => void;
-    clear: () => void;
-    expire: (data: { key: string }) => void;
-}
-
 // Phone related types
 export interface PhoneConfig {
     hardware: {
@@ -153,22 +143,27 @@ export interface PhoneConfig {
     };
 }
 
-// Hardware types
-export interface DAHDIConfig {
-    devicePath: string;
-    controlPath: string;
-    sampleRate: 8000;  // Must be 8kHz for DAHDI
-    channels: 1;       // Must be mono for DAHDI
-    bitDepth: 16;      // Must be 16-bit for DAHDI
-    bufferSize: number;
-    channel: number;
-    monitorInterval?: number;
-    audio?: {
-        echoCancellation?: {
-            enabled: boolean;
-            taps: number;
-        };
-    };
+// Hardware event types
+export interface HardwareEvent extends BaseEvent {
+    eventType: 'error' | 'status' | 'data';
+    deviceId: string;
+    data?: any;
+}
+
+// Diagnostic result types
+export interface DiagnosticResult {
+    test: string;
+    passed: boolean;
+    message?: string;
+}
+
+// Phone state types
+export enum PhoneState {
+    IDLE = 'idle',
+    OFF_HOOK = 'off_hook',
+    RINGING = 'ringing',
+    IN_CALL = 'in_call',
+    ERROR = 'error'
 }
 
 // Success feedback types
@@ -199,13 +194,13 @@ export type EventHandler = (event: BaseEvent) => Promise<void>;
 export interface ErrorContext {
     component: string;
     operation: string;
-    severity: 'low' | 'medium' | 'high' | 'critical';
+    severity: ErrorSeverity;
     retryCount?: number;
     isRecoverable?: boolean;
     metadata?: Record<string, unknown>;
 }
 
-// Export key types from other files to maintain backwards compatibility
+// Re-export key types from other files to maintain backwards compatibility
 export * from './services';
 export * from './errors';
 export * from './logging';
