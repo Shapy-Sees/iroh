@@ -178,7 +178,8 @@ export class PhoneController extends EventEmitter {
                 logger.error('Error handling audio data:', error);
                 await this.errorHandler.handleError(error, {
                     component: 'audio',
-                    operation: 'process'
+                    operation: 'process',
+                    severity: ErrorSeverity.HIGH
                 });
             }
         });

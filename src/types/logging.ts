@@ -1,3 +1,8 @@
+// src/types/logging.ts
+//
+// Type definitions for logging system
+// Provides strongly typed logging interfaces, metadata types, and validation helpers
+
 // Define log levels
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 
@@ -9,8 +14,31 @@ export enum ErrorSeverity {
     CRITICAL = 'critical'
 }
 
-// Component types for metadata
-export type LogComponent = 'hardware' | 'audio' | 'service' | 'system' | 'ai' | 'state';
+// Define components that can log
+export type LogComponent = 
+    | 'hardware' 
+    | 'audio' 
+    | 'service' 
+    | 'system' 
+    | 'ai' 
+    | 'state'
+    | 'phone'
+    | 'timer'
+    | 'music'
+    | 'config'
+    | 'intent';
+
+// Log metadata types
+export type LogMetadataType = 
+    | 'error' 
+    | 'hardware' 
+    | 'audio' 
+    | 'service' 
+    | 'command' 
+    | 'state'
+    | 'config'
+    | 'event'
+    | 'debug';
 
 // Base metadata interface with required fields
 export interface BaseLogMetadata {
@@ -18,11 +46,8 @@ export interface BaseLogMetadata {
     timestamp: string;
     type: LogMetadataType;
     context?: Record<string, unknown>;
-    operation?: string;
     severity?: ErrorSeverity;
 }
-
-export type LogMetadataType = 'error' | 'hardware' | 'audio' | 'service' | 'command' | 'state';
 
 // Specific metadata interfaces extending base
 export interface ErrorLogMetadata extends BaseLogMetadata {
@@ -39,7 +64,6 @@ export interface ErrorLogMetadata extends BaseLogMetadata {
 export interface HardwareLogMetadata extends BaseLogMetadata {
     type: 'hardware';
     deviceId: string;
-    channelNumber?: number;
     status?: string;
     metrics?: {
         voltage?: number;
@@ -58,6 +82,9 @@ export interface AudioLogMetadata extends BaseLogMetadata {
     };
     duration?: number;
     level?: number;
+    bytes?: number;
+    droppedFrames?: number;
+    processedFrames?: number;
 }
 
 export interface ServiceLogMetadata extends BaseLogMetadata {
@@ -65,6 +92,9 @@ export interface ServiceLogMetadata extends BaseLogMetadata {
     serviceId: string;
     status: string;
     metrics?: Record<string, number>;
+    action?: string;
+    operation?: string;
+    result?: string;
 }
 
 export interface CommandLogMetadata extends BaseLogMetadata {
@@ -73,6 +103,7 @@ export interface CommandLogMetadata extends BaseLogMetadata {
     command: string;
     duration?: number;
     parameters?: Record<string, unknown>;
+    success?: boolean;
 }
 
 export interface StateLogMetadata extends BaseLogMetadata {
@@ -80,6 +111,30 @@ export interface StateLogMetadata extends BaseLogMetadata {
     previousState: string;
     newState: string;
     stateData?: Record<string, unknown>;
+    entityId?: string;
+}
+
+export interface ConfigLogMetadata extends BaseLogMetadata {
+    type: 'config';
+    configType: string;
+    changes?: Record<string, unknown>;
+    validation?: {
+        isValid: boolean;
+        errors?: string[];
+    };
+}
+
+export interface EventLogMetadata extends BaseLogMetadata {
+    type: 'event';
+    eventType: string;
+    eventId: string;
+    data?: Record<string, unknown>;
+}
+
+export interface DebugLogMetadata extends BaseLogMetadata {
+    type: 'debug';
+    debugType: string;
+    data?: Record<string, unknown>;
 }
 
 // Combined type for all possible metadata
@@ -89,7 +144,10 @@ export type LogMetadata =
     | AudioLogMetadata
     | ServiceLogMetadata
     | CommandLogMetadata
-    | StateLogMetadata;
+    | StateLogMetadata
+    | ConfigLogMetadata
+    | EventLogMetadata
+    | DebugLogMetadata;
 
 // Configuration interface
 export interface LoggerConfig {
@@ -116,29 +174,38 @@ export interface LogEntry {
 
 // Type guards with discriminated unions
 export const isErrorMetadata = (metadata: LogMetadata): metadata is ErrorLogMetadata =>
-    metadata.type === 'error' && 'error' in metadata;
+    metadata.type === 'error';
 
 export const isHardwareMetadata = (metadata: LogMetadata): metadata is HardwareLogMetadata =>
-    metadata.type === 'hardware' && 'deviceId' in metadata;
+    metadata.type === 'hardware';
 
 export const isAudioMetadata = (metadata: LogMetadata): metadata is AudioLogMetadata =>
-    metadata.type === 'audio' && 'format' in metadata;
+    metadata.type === 'audio';
 
 export const isServiceMetadata = (metadata: LogMetadata): metadata is ServiceLogMetadata =>
-    metadata.type === 'service' && 'serviceId' in metadata;
+    metadata.type === 'service';
 
 export const isCommandMetadata = (metadata: LogMetadata): metadata is CommandLogMetadata =>
-    metadata.type === 'command' && 'commandId' in metadata;
+    metadata.type === 'command';
 
 export const isStateMetadata = (metadata: LogMetadata): metadata is StateLogMetadata =>
-    metadata.type === 'state' && 'previousState' in metadata && 'newState' in metadata;
+    metadata.type === 'state';
+
+export const isConfigMetadata = (metadata: LogMetadata): metadata is ConfigLogMetadata =>
+    metadata.type === 'config';
+
+export const isEventMetadata = (metadata: LogMetadata): metadata is EventLogMetadata =>
+    metadata.type === 'event';
+
+export const isDebugMetadata = (metadata: LogMetadata): metadata is DebugLogMetadata =>
+    metadata.type === 'debug';
 
 // Validation helpers
 export const validateMetadata = (metadata: LogMetadata): boolean => {
     if (!metadata.type || !metadata.component) return false;
 
     const isValidComponent = (component: string): component is LogComponent => {
-        return ['hardware', 'audio', 'service', 'system', 'ai', 'state'].includes(component);
+        return ['hardware', 'audio', 'service', 'system', 'ai', 'state', 'phone', 'timer', 'music', 'config', 'intent'].includes(component);
     };
 
     if (!isValidComponent(metadata.component)) return false;
@@ -156,12 +223,18 @@ export const validateMetadata = (metadata: LogMetadata): boolean => {
             return isCommandMetadata(metadata);
         case 'state':
             return isStateMetadata(metadata);
+        case 'config':
+            return isConfigMetadata(metadata);
+        case 'event':
+            return isEventMetadata(metadata);
+        case 'debug':
+            return isDebugMetadata(metadata);
         default:
             return false;
     }
 };
 
-// New helper for creating metadata
+// Helper function to create typed metadata
 export function createLogMetadata<T extends LogMetadataType>(
     type: T,
     component: LogComponent,

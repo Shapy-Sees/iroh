@@ -1,3 +1,5 @@
+// src/config/constants.ts
+
 export const DAHDI_CONSTANTS = {
     DEVICE_PATH: '/dev/dahdi',
     EC_TAPS: 128,
