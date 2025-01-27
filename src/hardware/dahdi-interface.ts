@@ -13,7 +13,8 @@ import {
     DAHDIConfig,
     DAHDIError,
     DAHDIAudioFormat,
-    isDAHDIFormat
+    isDAHDIFormat,
+    DAHDIFormatError
 } from '../types';
 
 import { EventEmitter } from 'events';
@@ -28,8 +29,7 @@ import {
     DAHDIIOCtl,
     DAHDIBufferInfo,
     DAHDIChannelStatus,
-    AudioConverterOptions,
-    DAHDIFormatError
+    AudioConverterOptions
 } from '../types/hardware/dahdi';
 
 import { AudioFormat, AudioInput, AudioError } from '../types/hardware/audio';
@@ -39,7 +39,7 @@ export class DAHDIInterface extends EventEmitter {
     private controlHandle: FileHandle | null = null;
     private isActive: boolean = false;
     private audioBuffer: CircularBuffer;
-    private readonly config: Required<DAHDIConfig>;
+    private readonly config: DAHDIConfig;
     private monitorInterval: NodeJS.Timeout | null = null;
     private lastError: Error | null = null;
     private channelStatus: DAHDIChannelStatus | null = null;
@@ -54,7 +54,8 @@ export class DAHDIInterface extends EventEmitter {
     constructor(config: Partial<DAHDIConfig>) {
         super();
 
-        // Initialize with defaults for DAHDI hardware
+        // Validate and set configuration with strict types
+        this.validateConfig(config);
         this.config = {
             devicePath: '/dev/dahdi/channel001',
             controlPath: '/dev/dahdi/ctl',
@@ -88,6 +89,18 @@ export class DAHDIInterface extends EventEmitter {
                 controlPath: '***'
             }
         });
+    }
+
+    private validateConfig(config: Partial<DAHDIConfig>): void {
+        if (config.sampleRate && config.sampleRate !== 8000) {
+            throw new DAHDIFormatError('Sample rate must be 8000Hz', ['Invalid sample rate']);
+        }
+        if (config.channels && config.channels !== 1) {
+            throw new DAHDIFormatError('Only mono audio supported', ['Invalid channel count']);
+        }
+        if (config.bitDepth && config.bitDepth !== 16) {
+            throw new DAHDIFormatError('Bit depth must be 16-bit', ['Invalid bit depth']);
+        }
     }
 
     public async start(): Promise<void> {
@@ -269,17 +282,33 @@ export class DAHDIInterface extends EventEmitter {
     
      // Handles audio playback with format conversion 
     public async playAudio(buffer: Buffer, format: Partial<AudioFormat> = {}): Promise<void> {
-        try {
-            // Validate and convert format if needed
-            if (!isDAHDIFormat(format)) {
-                const convertedBuffer = await this.audioConverter.convertToDAHDI(buffer, format);
-                await this.writeAudio(convertedBuffer);
-            } else {
-                await this.writeAudio(buffer);
-            }
-        } catch (error) {
-            throw new DAHDIError('Audio playback failed', { cause: error });
+        if (!this.isActive) {
+            throw new DAHDIError('Interface not active');
         }
+
+        try {
+            // Strict format validation
+            if (format && !this.validateAudioFormat(format)) {
+                throw new DAHDIFormatError('Invalid audio format', [
+                    'Must be 8kHz sample rate',
+                    'Must be mono channel',
+                    'Must be 16-bit PCM',
+                    'Must be linear format'
+                ]);
+            }
+
+            await this.writeAudio(buffer);
+        } catch (error) {
+            this.handleError('Audio playback failed', error);
+            throw error;
+        }
+    }
+
+    private validateAudioFormat(format: Partial<AudioFormat>): format is DAHDIAudioFormat {
+        return format.sampleRate === 8000 &&
+               format.channels === 1 &&
+               format.bitDepth === 16 &&
+               format.format === 'linear';
     }
 
     public async ring(duration: number = 2000): Promise<void> {
@@ -310,9 +339,12 @@ export class DAHDIInterface extends EventEmitter {
         }
 
         try {
-            await this.fileHandle.write(buffer);
+            const result = await this.fileHandle.write(buffer);
+            if (result.bytesWritten !== buffer.length) {
+                throw new DAHDIError('Incomplete audio write');
+            }
         } catch (error) {
-            throw new DAHDIError('Failed to write audio', error as Error);
+            throw new DAHDIError('Audio write failed', { cause: error });
         }
     }
 
@@ -379,9 +411,12 @@ export class DAHDIInterface extends EventEmitter {
     }
 
     private handleError(context: string, error: unknown): void {
-        const dahdiError = new DAHDIError(context, { cause: error });
+        const dahdiError = error instanceof DAHDIError ? 
+            error : 
+            new DAHDIError(context, { cause: error });
+        
         logger.error(dahdiError.message, { error: dahdiError });
-        this.emit('error', dahdiError);
         this.lastError = dahdiError;
+        this.emit('error', dahdiError);
     }
 }

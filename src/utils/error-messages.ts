@@ -160,15 +160,32 @@ export class ErrorMessages {
             }
 
             logger.debug('Generated error feedback', {
-                error: error.message,
+                component: context.component,
+                type: 'error',
+                timestamp: new Date().toISOString(),
+                error: {
+                    message: error.message,
+                    name: error.name
+                },
                 severity: context.severity,
-                message
+                details: { message }
             });
 
             return message;
 
         } catch (error) {
-            logger.error('Error generating feedback:', error);
+            const err = ensureError(error);
+            logger.error('Error generating feedback:', {
+                component: 'system',
+                type: 'error',
+                timestamp: new Date().toISOString(),
+                error: {
+                    message: err.message,
+                    name: err.name,
+                    stack: err.stack
+                },
+                severity: ErrorSeverity.MEDIUM
+            });
             return this.getGenericMessage(context);
         }
     }

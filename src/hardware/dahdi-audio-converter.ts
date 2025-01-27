@@ -31,11 +31,11 @@ interface ConverterConfig {
 
 export class DAHDIAudioConverter {
     private readonly config: Required<ConverterConfig>;
-    private readonly dahdiFormat: AudioFormat = {
+    private readonly dahdiFormat: DAHDIAudioFormat = {
         sampleRate: 8000,
         channels: 1,
         bitDepth: 16,
-        encoding: 'linear'
+        format: 'linear'
     };
 
     constructor(config: Partial<ConverterConfig> = {}) {
@@ -46,27 +46,30 @@ export class DAHDIAudioConverter {
         };
     }
 
-    public async convertToDAHDI(buffer: Buffer, sourceFormat?: Partial<DAHDIAudioFormat>): Promise<Buffer> {
+    private validateFormat(format: Partial<AudioFormat>): asserts format is DAHDIAudioFormat {
+        if (format.sampleRate !== 8000) {
+            throw new AudioFormatError('Invalid sample rate', ['Must be 8000Hz']);
+        }
+        if (format.channels !== 1) {
+            throw new AudioFormatError('Invalid channel count', ['Must be mono']);
+        }
+        if (format.bitDepth !== 16) {
+            throw new AudioFormatError('Invalid bit depth', ['Must be 16-bit']);
+        }
+        if (format.format !== 'linear') {
+            throw new AudioFormatError('Invalid format', ['Must be linear PCM']);
+        }
+    }
+
+    public async convertToDAHDI(buffer: Buffer, sourceFormat: Partial<AudioFormat>): Promise<Buffer> {
         try {
-            // Validate source format
-            if (!this.isCompatibleFormat(sourceFormat)) {
-                throw new AudioFormatError('Incompatible audio format for DAHDI', [
-                    'Must be 8kHz sample rate',
-                    'Must be mono channel',
-                    'Must be 16-bit PCM'
-                ]);
-            }
-
-            // If already in DAHDI format, return as-is
-            if (this.isDAHDIFormat(sourceFormat)) {
-                return buffer;
-            }
-
-            // Perform conversion
-            return await this.convert(buffer, sourceFormat);
+            this.validateFormat(sourceFormat);
+            return buffer;
         } catch (error) {
-            logger.error('Audio conversion error:', error);
-            throw error instanceof Error ? error : new AudioError('Conversion failed');
+            if (error instanceof AudioFormatError) {
+                throw error;
+            }
+            throw new AudioError('Conversion failed', { cause: error });
         }
     }
 
