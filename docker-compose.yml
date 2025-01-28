@@ -1,0 +1,12 @@
+# iroh-operator/docker-compose.yml
+version: '3.8'
+services:
+  operator:
+    build: .
+    environment:
+      - DAHDI_API_URL=http://dahdi-api:8000
+      - DAHDI_WS_URL=ws://dahdi-api:8001
+    ports:
+      - "3000:3000"  # Operator API (if needed)
+    depends_on:
+      - dahdi-api
