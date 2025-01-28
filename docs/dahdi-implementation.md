@@ -57,6 +57,7 @@ defaultzone=us
 
 ### Node.js DAHDI Interface
 
+This project has an issue, which is TypeScript can't interact with ioctl commands natively.
 The system uses a native Node.js addon to interface with DAHDI. Key functions:
 
 1. Channel Management
