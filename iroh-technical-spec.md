@@ -35,287 +35,269 @@ Iroh is an AI-powered interface for vintage telephones that provides smart home 
   - Services must be independently testable
   - Must provide clean shutdown
 
-### Service Interface Requirements
-```typescript
-interface Service {
-    initialize(): Promise<void>;
-    shutdown(): Promise<void>;
-    getStatus(): ServiceStatus;
-    isHealthy(): boolean;
-}
-
-interface ServiceStatus {
-    state: ServiceState;
-    isHealthy: boolean;
-    lastError?: Error;
-    lastUpdate?: Date;
-}
-
-type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
-```
-
-### Status Management Requirements
-- Services must maintain current state
-- Must track health status
-- Must record errors
-- Must emit state change events
-- Must provide accurate timestamps
-
-### Controller Layer
-- **Purpose**: Coordinates between hardware and services
-- **Key Requirements**:
-  - Manages component lifecycle
-  - Handles cross-service operations
-  - Implements command processing
-  - Provides user feedback
-  - Maintains type safety
-
-### Support Systems
-- **Purpose**: Provides cross-cutting functionality
-- **Key Components**: Logging, Caching, Error Handling
-- **Requirements**:
-  - Must be available to all layers
-  - Implements consistent interfaces
-  - Provides configuration options
-  - Maintains type safety
-
 ## Type System
 
-### Core Types
+Rule: No new type files can be added.
+
+### Base Configuration Types
 ```typescript
 // Base configuration interface
+export interface BaseConfig {
+    enabled?: boolean;
+    retryAttempts?: number;
+    timeout?: number;
+}
+
+// Service configuration
+export interface ServiceConfig extends BaseConfig {
+    ai: AIConfig;
+    home: HomeConfig;
+    music: MusicConfig;
+    timer: TimerConfig;
+    hardware: HardwareConfig;
+}
+
+// Application configuration
 export interface Config {
     app: AppConfig;
-    audio: AudioConfig;
-    logging: LogConfig;
+    hardware: {
+        audio: AudioConfig;
+        dahdi: DAHDIConfig;
+    };
     services: ServiceConfig;
-}
-
-// Service registry
-export interface ServiceRegistry {
-    ai: IrohAIService;
-    home: HAService;
-    music: MusicService;
-    timer: TimerService;
-    hardware: HardwareService;
-}
-
-// Event system types
-export interface BaseEvent {
-    type: string;
-    timestamp: number;
-    metadata?: Record<string, unknown>;
-}
-
-// Status tracking
-export interface ServiceStatus {
-    state: ServiceState;
-    isHealthy: boolean;
-    lastError?: Error;
-    lastUpdate?: Date;
-}
-```
-
-### Hardware Types
-```typescript
-// DAHDI Types
-export interface DAHDIConfig {
-    devicePath: string;
-    controlPath: string;
-    sampleRate: 8000;
-    channels: 1;
-    bitDepth: 16;
-    bufferSize: number;
-    channel: number;
-    monitorInterval?: number;
-}
-
-// Audio Format
-export interface DAHDIAudioFormat {
-    sampleRate: 8000;
-    channels: 1;
-    bitDepth: 16;
-    format: 'linear';
+    logging: LogConfig;
 }
 ```
 
 ### Service Types
 ```typescript
-// AI Service
-export interface IrohAIService extends Service {
-    processText(text: string): Promise<string>;
-    generateSpeech(text: string): Promise<Buffer>;
-    processTextStreaming(text: string): Promise<void>;
+// Base service interface
+export interface Service {
+    initialize(): Promise<void>;
+    shutdown(): Promise<void>;
+    getStatus(): ServiceStatus;
+    isHealthy(): boolean;
+    emit<K extends keyof ServiceEventMap>(event: K, payload: ServiceEventMap[K]): boolean;
+    on<K extends keyof ServiceEventMap>(event: K, handler: (payload: ServiceEventMap[K]) => void): void;
 }
 
-// Home Assistant
-export interface HAService extends Service {
-    controlDevice(deviceId: string, command: string): Promise<void>;
-    getEntityState(entityId: string): Promise<HAEntityStatus>;
-    onEntityState(entityId: string, handler: HAStateHandler): void;
+// Service event map
+export interface ServiceEventMap {
+    'service:initialized': { serviceName: ServiceName };
+    'service:error': { serviceName: ServiceName; error: ServiceError };
+    'service:stateChanged': { serviceName: ServiceName; status: ServiceStatus };
+    'service:shutdown': { serviceName: ServiceName };
 }
 
-// Music Service
-export interface MusicService extends Service {
-    play(track: string): Promise<void>;
-    pause(): Promise<void>;
-    stop(): Promise<void>;
-    isPlaying(): boolean;
+// Service status
+export interface ServiceStatus {
+    state: ServiceState;
+    isHealthy: boolean;
+    lastError?: Error;
+    lastUpdate: Date;
+    metrics?: {
+        uptime: number;
+        errors: number;
+        warnings: number;
+        lastChecked: Date;
+    };
 }
 
-// Timer Service
-export interface TimerService extends Service {
-    createTimer(duration: number): Promise<string>;
-    cancelTimer(timerId: string): Promise<void>;
-    getActiveTimers(): string[];
+export type ServiceState = 'initializing' | 'ready' | 'error' | 'shutdown' | 'maintenance';
+```
+
+### Audio Types
+```typescript
+// DAHDI-compatible audio format
+export interface AudioFormat {
+    sampleRate: 8000;  // DAHDI requires 8kHz
+    channels: 1;       // DAHDI is mono
+    bitDepth: 16;      // DAHDI uses 16-bit
+    format: 'linear' | 'alaw' | 'ulaw';
+}
+
+// Audio input type
+export interface AudioInput {
+    sampleRate: number;
+    channels: number;
+    bitDepth: number;
+    data: Buffer;
+    format?: string;
+}
+```
+
+### Error Types
+```typescript
+// Error severity levels
+export enum ErrorSeverity {
+    LOW = 'low',
+    MEDIUM = 'medium',
+    HIGH = 'high',
+    CRITICAL = 'critical'
+}
+
+// Error context
+export interface ErrorContext {
+    component: string;
+    operation: string;
+    severity: ErrorSeverity;
+    retryCount: number;
+    isRecoverable: boolean;
+    metadata?: Record<string, unknown>;
+}
+
+// Service error
+export interface ServiceError extends Error {
+    name: 'ServiceError';
+    serviceName: string;
+    severity: ErrorSeverity;
+    timestamp: Date;
 }
 ```
 
 ### Logging Types
 ```typescript
-export interface LogMetadata {
-    component: string;
-    type: string;
+// Log levels
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+
+// Base log metadata
+export interface BaseLogMetadata {
+    component: LogComponent;
+    type: LogMetadataType;
     timestamp: string;
-    details?: Record<string, any>;
+    details?: Record<string, unknown>;
 }
 
-export interface ErrorLogMetadata extends LogMetadata {
+// Error log metadata
+export interface ErrorLogMetadata extends BaseLogMetadata {
+    type: 'error';
     error: {
         message: string;
         name: string;
         code?: string;
         stack?: string;
     };
-    severity: 'low' | 'medium' | 'high' | 'critical';
+    severity: ErrorSeverity;
 }
+
+// Component types
+export type LogComponent = 
+    | 'hardware' 
+    | 'audio' 
+    | 'service' 
+    | 'system' 
+    | 'ai' 
+    | 'state'
+    | 'phone'
+    | 'timer'
+    | 'music'
+    | 'config'
+    | 'intent';
+
+// Metadata types
+export type LogMetadataType = 
+    | 'error' 
+    | 'hardware' 
+    | 'audio' 
+    | 'service' 
+    | 'command' 
+    | 'state'
+    | 'config'
+    | 'event'
+    | 'debug';
 ```
 
 ## Error Handling Strategy
 
-### Error Types
-1. Service Errors
-   - Service state errors
-   - Operation failures
-   - Configuration errors
-   - API failures
+### Error Types Hierarchy
+1. Base Errors
+   - IrohError (base class)
+   - HardwareError
+   - ServiceError
+   - ConfigurationError
+   - ValidationError
 
-2. Hardware Errors
-   - DAHDI device errors
-   - Audio format errors
-   - Buffer errors
-   - Hardware timing errors
-
-3. System Errors
-   - Initialization failures
-   - Resource exhaustion
-   - Critical failures
+2. Error Classification
+   - Severity levels
+   - Component association
+   - Recovery options
 
 ### Error Recovery Process
-1. Error Detection
-   - Monitor service health
-   - Track hardware status
-   - Validate state transitions
-   - Check resource usage
+1. Detection & Logging
+   - Record full error context
+   - Log with appropriate severity
+   - Track error frequency
 
 2. Recovery Strategy
-   - Service restart
-   - Hardware reset
-   - State restoration
-   - User notification
+   - Attempt automatic recovery
+   - Fallback procedures
+   - Escalation path
 
-3. Status Management
-   - Update service status
-   - Record error details
-   - Emit error events
-   - Log with proper metadata
+3. Error Prevention
+   - Type validation
+   - Input sanitization
+   - State verification
 
 ## Logging Requirements
 
-Every component must implement comprehensive logging with type safety:
+### Log Entry Structure
+1. Required Fields
+   - Timestamp
+   - Component
+   - Log level
+   - Message
+   - Metadata
 
-1. Log Levels
-   - ERROR: System failures and errors
-   - WARN: Potential issues and degraded operations
-   - INFO: Major state changes and operations
-   - DEBUG: Detailed operational information
+2. Metadata Validation
+   - Component validation
+   - Type checking
+   - Required fields verification
 
-2. Metadata Requirements
-   - Must include component identification
-   - Must include proper typing
-   - Must include timestamps
-   - Must include contextual details
-
-3. Error Logging
-   - Must use ErrorLogMetadata
-   - Must include stack traces
-   - Must specify severity
-   - Must include context
+3. Context Requirements
+   - Error context
+   - Operation context
+   - State information
 
 ## Implementation Rules
 
-1. Service Implementation
+### Service Implementation
+1. Core Requirements
    - Must implement Service interface
-   - Must maintain status
-   - Must handle errors properly
-   - Must emit typed events
+   - Must handle typed events
+   - Must manage state
+   - Must implement error recovery
 
-2. Type Safety
-   - Use strict type checking
-   - No implicit any
-   - Proper interface implementation
-   - Typed event emission
+2. Event Handling
+   - Type-safe event emission
+   - Proper event context
+   - Error event handling
 
-3. Error Handling
-   - Use proper error types
-   - Maintain status during errors
-   - Implement recovery procedures
-   - Log with typed metadata
+3. Configuration
+   - Type-safe config
+   - Validation
+   - Defaults
 
-4. Testing Requirements
-   - Test all interface methods
-   - Verify error handling
-   - Test state transitions
-   - Validate type safety
+### Testing Requirements
+1. Service Tests
+   - Interface compliance
+   - Event handling
+   - Error recovery
+   - State management
 
-## Performance Requirements
+2. Integration Tests
+   - Cross-service interaction
+   - Error propagation
+   - State coordination
 
-1. Audio Processing
-   - Maintain DAHDI compatibility
-   - Handle real-time audio
-   - Minimize latency
-   - Optimize buffer usage
-
-2. Service Operations
-   - Fast state transitions
-   - Efficient error handling
-   - Optimized event emission
-   - Quick status updates
-
-3. Resource Management
-   - Proper cleanup
-   - Memory optimization
-   - Buffer management
-   - Connection pooling
-
-## Security Considerations
-
-1. API Security
-   - Secure token handling
-   - Input validation
-   - Error sanitization
-   - Safe logging practices
-
-2. Error Handling
+### Security Considerations
+1. Error Handling
    - Safe error messages
-   - Secure error logging
-   - Protected stack traces
-   - Sanitized user feedback
+   - Secure logging
+   - Error sanitization
 
-3. Resource Protection
-   - Access control
-   - Resource limits
-   - Safe cleanup
-   - Secure shutdown
+2. Input Validation
+   - Type checking
+   - Sanitization
+   - Boundary checking
 
 This specification serves as the authoritative reference for implementing the Iroh system. All components must adhere to these requirements to maintain system integrity and type safety.
