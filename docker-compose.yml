@@ -1,0 +1,25 @@
+# File: docker-compose.yml
+# Docker Compose configuration for the Iroh Home Management System
+# Defines service configuration, volumes, and device access
+
+version: '3.8'
+
+services:
+  iroh:
+    build: .
+    container_name: iroh-system
+    volumes:
+      - ./iroh/config:/app/iroh/config
+      - ./logs:/app/logs
+    environment:
+      - TZ=America/Los_Angeles
+      - PHONE_API_HOST=phone-api
+      - PHONE_API_REST_PORT=8000
+      - PHONE_API_WS_PORT=8001
+    restart: unless-stopped
+    networks:
+      - iroh-net
+
+networks:
+  iroh-net:
+    driver: bridge

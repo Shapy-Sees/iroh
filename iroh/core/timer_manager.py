@@ -186,6 +186,38 @@ class TimerManager:
             if not timer.completed and not timer.cancelled
         }
     
+    async def announce_timers(self) -> None:
+        """
+        Announce all active timers through audio service
+        """
+        try:
+            active_timers = self.get_active_timers()
+            
+            if not active_timers:
+                await self.audio.speak("No active timers")
+                return
+            
+            # Announce each timer
+            for timer in active_timers.values():
+                minutes_remaining = timer.remaining // 60
+                seconds_remaining = timer.remaining % 60
+                
+                if minutes_remaining > 0:
+                    time_str = f"{minutes_remaining} minutes"
+                    if seconds_remaining > 0:
+                        time_str += f" and {seconds_remaining} seconds"
+                else:
+                    time_str = f"{seconds_remaining} seconds"
+                
+                await self.audio.speak(
+                    f"{timer.name} has {time_str} remaining"
+                )
+            
+            logger.debug(f"Announced {len(active_timers)} active timers")
+            
+        except Exception as e:
+            logger.error(f"Failed to announce timers: {str(e)}", exc_info=True)
+    
     async def _run_timer(self, timer: Timer) -> None:
         """
         Run timer task

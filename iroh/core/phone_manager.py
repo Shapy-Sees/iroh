@@ -1,16 +1,17 @@
 # File: iroh/core/phone_manager.py
-# DAHDI phone interface manager for the Iroh Home Management System
-# Handles phone line control and DTMF event processing through the DAHDI API
+# Phone event handling and DTMF command processing for the Iroh Home Management System
 
 import asyncio
 import json
 import websockets
-import httpx
-from datetime import datetime
-from typing import AsyncGenerator, Dict, Any, Optional
+from typing import Optional, Dict, Any, AsyncGenerator
 
 from ..utils.logger import get_logger
 from ..utils.config import Config
+from .dtmf_state_machine import DTMFStateMachine
+from .timer_manager import TimerManager
+from ..services.audio_service import AudioService
+from ..services.home_assistant import HomeAssistant
 
 logger = get_logger(__name__)
 
@@ -20,250 +21,274 @@ class PhoneError(Exception):
 
 class PhoneManager:
     """
-    Manages phone interface through DAHDI API, handling both REST and WebSocket connections
-    for control operations and event monitoring
+    Manages phone events and DTMF command processing through the Phone API Server
     """
-    def __init__(self, config: Config):
-        # Configuration
+    def __init__(
+        self,
+        timer_manager: TimerManager,
+        audio_service: AudioService,
+        home_assistant: HomeAssistant,
+        config: Config
+    ):
+        self.timer_manager = timer_manager
+        self.audio = audio_service
+        self.home_assistant = home_assistant
         self.config = config
+        
+        # Initialize state machine
+        self.dtmf_machine = DTMFStateMachine()
+        self._setup_handlers()
+        
+        # Track phone state
+        self.off_hook = False
+        self._ws = None
+        self._running = False
+        
+        # Get API configuration
         self.rest_url = config.get("phone.api.rest_url", "http://localhost:8000")
         self.ws_url = config.get("phone.api.ws_url", "ws://localhost:8001/ws")
-        self.ring_timeout = config.get("phone.ring_timeout", 30)
-        self.dtmf_timeout = config.get("phone.dtmf_timeout", 5)
-        
-        # State tracking
-        self._running = False
-        self._ws_client: Optional[websockets.WebSocketClientProtocol] = None
-        self._event_queue: asyncio.Queue = asyncio.Queue()
-        self._command_buffer = []
-        self._last_dtmf_time: Optional[datetime] = None
-        
-        # HTTP client for REST API
-        self._http_client = httpx.AsyncClient(timeout=30.0)
         
         logger.debug("PhoneManager initialized")
     
     async def connect(self) -> None:
-        """
-        Connect to DAHDI API services and start event monitoring
-        
-        Raises:
-            PhoneError: If connection fails
-        """
+        """Connect to the phone API server"""
         try:
-            # First verify REST API is available
-            logger.debug("Verifying REST API connection...")
-            response = await self._http_client.get(f"{self.rest_url}/status")
-            response.raise_for_status()
-            
-            # Start WebSocket connection
-            logger.debug("Establishing WebSocket connection...")
+            # Connect WebSocket
+            self._ws = await websockets.connect(self.ws_url)
             self._running = True
-            asyncio.create_task(self._maintain_ws_connection())
             
-            logger.info("Successfully connected to DAHDI API services")
+            # Start event processing
+            asyncio.create_task(self._event_loop())
             
-        except httpx.HTTPError as e:
-            logger.error(f"Failed to connect to REST API: {str(e)}", exc_info=True)
-            raise PhoneError(f"REST API connection failed: {str(e)}")
+            logger.info("Connected to phone API server")
+            
         except Exception as e:
-            logger.error(f"Connection failed: {str(e)}", exc_info=True)
+            logger.error(f"Failed to connect to phone API: {str(e)}", exc_info=True)
             raise PhoneError(f"Connection failed: {str(e)}")
     
     async def disconnect(self) -> None:
-        """Disconnect from DAHDI API services"""
-        logger.info("Disconnecting from DAHDI API services")
-        
+        """Disconnect from the phone API server"""
         self._running = False
-        
-        # Close WebSocket connection
-        if self._ws_client:
-            await self._ws_client.close()
-        
-        # Close HTTP client
-        await self._http_client.aclose()
+        if self._ws:
+            await self._ws.close()
+            self._ws = None
+        logger.info("Disconnected from phone API server")
     
-    async def events(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Generate phone events (DTMF, hook state changes, etc.)
-        
-        Yields:
-            Event dictionaries containing event type and data
-        """
-        while self._running:
+    async def _event_loop(self) -> None:
+        """Process WebSocket events"""
+        while self._running and self._ws:
             try:
-                event = await self._event_queue.get()
-                yield event
-                self._event_queue.task_done()
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error in event generator: {str(e)}", exc_info=True)
-                await asyncio.sleep(1)
-    
-    async def _maintain_ws_connection(self) -> None:
-        """Maintain WebSocket connection with automatic reconnection"""
-        while self._running:
-            try:
-                async with websockets.connect(self.ws_url) as ws:
-                    self._ws_client = ws
-                    logger.info("WebSocket connection established")
-                    await self._handle_ws_events(ws)
-                    
-            except websockets.ConnectionClosed:
-                logger.warning("WebSocket connection closed, reconnecting...")
-                await asyncio.sleep(5)
-            except Exception as e:
-                logger.error(f"WebSocket error: {str(e)}", exc_info=True)
-                await asyncio.sleep(5)
-    
-    async def _handle_ws_events(self, ws: websockets.WebSocketClientProtocol) -> None:
-        """
-        Handle incoming WebSocket events
-        
-        Args:
-            ws: WebSocket client connection
-        """
-        while self._running:
-            try:
-                message = await ws.recv()
-                event_data = json.loads(message)
-                
-                # Process and validate event
-                if processed_event := self._process_event(event_data):
-                    await self._event_queue.put(processed_event)
+                message = await self._ws.recv()
+                event = json.loads(message)
+                await self.handle_phone_event(event)
                 
             except websockets.ConnectionClosed:
+                logger.error("WebSocket connection closed")
+                await self.disconnect()
                 break
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON in WebSocket message: {str(e)}")
+                
             except Exception as e:
-                logger.error(f"Error processing WebSocket message: {str(e)}", exc_info=True)
+                logger.error(f"Error in event loop: {str(e)}", exc_info=True)
+                await asyncio.sleep(1)  # Prevent tight error loop
     
-    def _process_event(self, event_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Process and validate incoming events
-        
-        Args:
-            event_data: Raw event data from WebSocket
-            
-        Returns:
-            Processed event dictionary or None if invalid
-        """
+    def _setup_handlers(self) -> None:
+        """Register command handlers with state machine"""
         try:
-            # Validate event has required fields
-            if "type" not in event_data:
-                raise ValueError("Event missing type field")
-            
-            # Process different event types
-            if event_data["type"] == "dtmf":
-                if "digit" not in event_data:
-                    raise ValueError("DTMF event missing digit")
-                self._handle_dtmf_buffer(event_data)
-            
-            return event_data
-            
-        except Exception as e:
-            logger.error(f"Event processing error: {str(e)}", exc_info=True)
-            return None
-    
-    def _handle_dtmf_buffer(self, event_data: Dict[str, Any]) -> None:
-        """
-        Handle DTMF digit buffering and timeouts
-        
-        Args:
-            event_data: DTMF event data
-        """
-        now = datetime.fromisoformat(event_data["timestamp"])
-        
-        # Clear buffer if timeout exceeded
-        if self._last_dtmf_time and (now - self._last_dtmf_time).seconds > self.dtmf_timeout:
-            self._command_buffer.clear()
-        
-        # Update buffer and timestamp
-        self._command_buffer.append(event_data["digit"])
-        self._last_dtmf_time = now
-        
-        # Add buffer to event data
-        event_data["buffer"] = self._command_buffer.copy()
-    
-    async def ring(self, pattern: str = "NORMAL", repeat: int = 1) -> None:
-        """
-        Start phone ringing with specified pattern
-        
-        Args:
-            pattern: Ring pattern name
-            repeat: Number of pattern repetitions
-            
-        Raises:
-            PhoneError: If ring command fails
-        """
-        try:
-            response = await self._http_client.post(
-                f"{self.rest_url}/ring",
-                json={
-                    "pattern": pattern,
-                    "repeat": repeat
-                }
+            # Timer handlers
+            self.dtmf_machine.register_handler(
+                "timer_manager.create_timer",
+                self._handle_timer_creation
             )
-            response.raise_for_status()
+            self.dtmf_machine.register_handler(
+                "timer_manager.announce_timers",
+                self.timer_manager.announce_timers
+            )
+            
+            # Home Assistant handlers
+            self.dtmf_machine.register_handler(
+                "home_assistant.lights_on",
+                self._handle_lights_on
+            )
+            self.dtmf_machine.register_handler(
+                "home_assistant.lights_off",
+                self._handle_lights_off
+            )
+            self.dtmf_machine.register_handler(
+                "home_assistant.set_temperature",
+                self._handle_set_temperature
+            )
+            
+            # Register transformers
+            self.dtmf_machine.register_transformer(
+                "minutes_from_digits",
+                self._transform_minutes
+            )
+            self.dtmf_machine.register_transformer(
+                "temperature_from_digits",
+                self._transform_temperature
+            )
+            
+            logger.debug("Command handlers registered")
             
         except Exception as e:
-            logger.error(f"Ring command failed: {str(e)}", exc_info=True)
-            raise PhoneError(f"Ring command failed: {str(e)}")
+            logger.error(f"Failed to setup handlers: {str(e)}", exc_info=True)
+            raise
     
-    async def stop_ring(self) -> None:
+    async def handle_phone_event(self, event: Dict[str, Any]) -> None:
         """
-        Stop phone ringing
-        
-        Raises:
-            PhoneError: If stop ring command fails
-        """
-        try:
-            response = await self._http_client.post(f"{self.rest_url}/stop-ring")
-            response.raise_for_status()
-            
-        except Exception as e:
-            logger.error(f"Stop ring command failed: {str(e)}", exc_info=True)
-            raise PhoneError(f"Stop ring command failed: {str(e)}")
-    
-    async def play_audio(self, audio_data: bytes) -> None:
-        """
-        Play audio through phone line
+        Handle phone events (off hook, on hook, DTMF)
         
         Args:
-            audio_data: Raw audio bytes (8kHz, 16-bit, mono)
-            
-        Raises:
-            PhoneError: If audio playback fails
+            event: Phone event dictionary
         """
         try:
-            response = await self._http_client.post(
-                f"{self.rest_url}/play-audio",
-                content=audio_data,
-                headers={"Content-Type": "application/octet-stream"}
-            )
-            response.raise_for_status()
+            event_type = event.get("type")
+            
+            if event_type == "off_hook":
+                await self._handle_off_hook()
+            elif event_type == "on_hook":
+                await self._handle_on_hook()
+            elif event_type == "dtmf":
+                await self._handle_dtmf(event.get("digit", ""))
+            else:
+                logger.warning(f"Unknown event type: {event_type}")
             
         except Exception as e:
-            logger.error(f"Audio playback failed: {str(e)}", exc_info=True)
-            raise PhoneError(f"Audio playback failed: {str(e)}")
+            logger.error(f"Error handling phone event: {str(e)}", exc_info=True)
+    
+    async def _handle_off_hook(self) -> None:
+        """Handle phone off hook event"""
+        try:
+            self.off_hook = True
+            
+            # Start DTMF state machine
+            await self.dtmf_machine.start()
+            
+            logger.debug("Phone off hook")
+            
+        except Exception as e:
+            logger.error(f"Error handling off hook: {str(e)}", exc_info=True)
+    
+    async def _handle_on_hook(self) -> None:
+        """Handle phone on hook event"""
+        try:
+            self.off_hook = False
+            logger.debug("Phone on hook")
+            
+        except Exception as e:
+            logger.error(f"Error handling on hook: {str(e)}", exc_info=True)
+    
+    async def _handle_dtmf(self, digit: str) -> None:
+        """
+        Handle DTMF digit event
+        
+        Args:
+            digit: DTMF digit received
+        """
+        try:
+            if not self.off_hook:
+                logger.warning("Received DTMF while on hook")
+                return
+            
+            # Determine event type
+            if digit == "*":
+                event_type = "star"
+            elif digit == "#":
+                event_type = "hash"
+            else:
+                event_type = "digit"
+            
+            # Pass to state machine
+            await self.dtmf_machine.handle_event(event_type, digit)
+            
+        except Exception as e:
+            logger.error(f"Error handling DTMF: {str(e)}", exc_info=True)
+    
+    # Command Handlers
+    
+    async def _handle_timer_creation(self, minutes: int, **kwargs) -> None:
+        """Create a timer from DTMF input"""
+        try:
+            await self.timer_manager.quick_timer(minutes)
+        except Exception as e:
+            logger.error(f"Error creating timer: {str(e)}", exc_info=True)
+            await self.audio.speak("Failed to create timer")
+    
+    async def _handle_lights_on(self, input_str: str, entity: str) -> None:
+        """Turn on lights"""
+        try:
+            await self.home_assistant.turn_on(entity)
+            await self.audio.speak("Lights turned on")
+        except Exception as e:
+            logger.error(f"Error turning lights on: {str(e)}", exc_info=True)
+            await self.audio.speak("Failed to turn on lights")
+    
+    async def _handle_lights_off(self, input_str: str, entity: str) -> None:
+        """Turn off lights"""
+        try:
+            await self.home_assistant.turn_off(entity)
+            await self.audio.speak("Lights turned off")
+        except Exception as e:
+            logger.error(f"Error turning lights off: {str(e)}", exc_info=True)
+            await self.audio.speak("Failed to turn off lights")
+    
+    async def _handle_set_temperature(
+        self,
+        temperature: int,
+        entity: str
+    ) -> None:
+        """Set thermostat temperature"""
+        try:
+            await self.home_assistant.set_temperature(entity, temperature)
+            await self.audio.speak(f"Temperature set to {temperature} degrees")
+        except Exception as e:
+            logger.error(f"Error setting temperature: {str(e)}", exc_info=True)
+            await self.audio.speak("Failed to set temperature")
+    
+    # Transformers
+    
+    def _transform_minutes(self, digits: str) -> int:
+        """Convert digit string to minutes"""
+        try:
+            minutes = int(digits)
+            if not 1 <= minutes <= 999:
+                raise ValueError("Minutes must be between 1 and 999")
+            return minutes
+        except ValueError as e:
+            logger.error(f"Invalid minutes value: {str(e)}")
+            raise
+    
+    def _transform_temperature(self, digits: str) -> int:
+        """Convert digit string to temperature"""
+        try:
+            temp = int(digits)
+            if not 60 <= temp <= 85:
+                raise ValueError("Temperature must be between 60 and 85")
+            return temp
+        except ValueError as e:
+            logger.error(f"Invalid temperature value: {str(e)}")
+            raise
 
 # Example usage:
 #
-# phone = PhoneManager(config)
-# await phone.connect()
-# 
-# # Start event processing
-# async for event in phone.events():
-#     if event["type"] == "dtmf":
-#         print(f"DTMF digit: {event['digit']}")
-#     elif event["type"] == "off_hook":
-#         print("Phone off hook")
-# 
-# # Ring phone
-# await phone.ring(pattern="TIMER", repeat=1)
-# 
-# # Cleanup
-# await phone.disconnect()
+# phone_manager = PhoneManager(
+#     timer_manager=timer_manager,
+#     audio_service=audio_service,
+#     home_assistant=home_assistant,
+#     config=config
+# )
+#
+# # Handle phone events
+# await phone_manager.handle_phone_event({
+#     "type": "off_hook"
+# })
+#
+# await phone_manager.handle_phone_event({
+#     "type": "dtmf",
+#     "digit": "5"
+# })
+#
+# await phone_manager.handle_phone_event({
+#     "type": "dtmf",
+#     "digit": "#"
+# })

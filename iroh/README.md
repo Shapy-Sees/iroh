@@ -1,10 +1,10 @@
 # Iroh Home Management System
 
-A sophisticated home automation system providing phone-based control through DTMF commands and voice recognition.  Iroh aims to be both wise in its decisions and helpful in its interactions.
+A sophisticated home automation system providing phone-based control through DTMF commands and voice recognition. Iroh aims to be both wise in its decisions and helpful in its interactions.
 
 ## Overview
 
-Iroh turns your analog phone line into a smart home control interface by interpreting DTMF tones (phone button presses) and voice commands. It connects to a DAHDI Phone API service to interact with telephone hardware, providing immediate timer creation, home automation control, and voice command processing.
+Iroh turns your analog phone line into a smart home control interface by interpreting DTMF tones (phone button presses) and voice commands. It connects to a Phone API service to interact with telephone hardware, providing immediate timer creation, home automation control, and voice command processing.
 
 ## Features
 
@@ -17,7 +17,7 @@ Iroh turns your analog phone line into a smart home control interface by interpr
 
 ### Integration Support
 - Home Assistant connectivity
-- DAHDI Phone API service communication
+- Phone API service communication
 - Voice recognition (future)
 - External display support (planned)
 
@@ -31,7 +31,7 @@ Iroh turns your analog phone line into a smart home control interface by interpr
 
 ### System Requirements
 - Python 3.9+
-- Network access to DAHDI Phone API service
+- Network access to Phone API service
 - Network connectivity for integrations
 - Home Assistant instance (optional)
 
@@ -59,10 +59,11 @@ system:
   debug_mode: true
   log_level: "DEBUG"
 
-dahdi_api:
-  host: "localhost"  # DAHDI Phone API service host
-  rest_port: 8000
-  websocket_port: 8001
+phone:
+  api:
+    rest_url: "http://localhost:8000"
+    ws_url: "ws://localhost:8001/ws"
+    timeout: 30
 
 audio:
   enable_tts: true
@@ -129,7 +130,7 @@ iroh/
 
 ### Key Components
 1. `IrohOperator`: Main system coordinator
-2. `PhoneManager`: DAHDI API interface
+2. `PhoneManager`: Phone API interface
 3. `TimerManager`: Timer handling
 4. `CommandParser`: Command interpretation
 5. `StateManager`: System state tracking
@@ -148,8 +149,8 @@ iroh/
 
 ## API Integration
 
-### DAHDI Phone API
-The system requires access to a running DAHDI Phone API service:
+### Phone API
+The system requires access to a running Phone API service:
 
 - REST API (port 8000):
   - Phone status
@@ -174,4 +175,3 @@ Integration with Home Assistant for:
 3. Make changes
 4. Add tests
 5. Submit pull request
-

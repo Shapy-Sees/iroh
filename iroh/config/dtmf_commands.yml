@@ -1,0 +1,95 @@
+# File: iroh/config/dtmf_commands.yml
+# DTMF command configuration for the Iroh Home Management System
+# Defines the state machine and command patterns for phone input handling
+
+# Global settings
+settings:
+  default_timeout: 5000  # ms to wait between digits
+  require_hash_termination: true
+  announce_on_pickup: true
+
+# State definitions
+states:
+  initial:
+    description: "Base state when phone is picked up"
+    on_enter:
+      - announce_active_timers
+    handlers:
+      - type: digits
+        description: "Direct timer input"
+        pattern: "[0-9]+"
+        terminator: "#"
+        action:
+          handler: timer_manager.create_timer
+          transform: "minutes_from_digits"
+      
+      - type: star
+        description: "Enter command mode"
+        pattern: "*"
+        next_state: command_mode
+
+  command_mode:
+    description: "Mode after * is pressed"
+    timeout: 3000  # ms
+    handlers:
+      - pattern: "1#"
+        description: "Lights on"
+        action:
+          handler: home_assistant.lights_on
+          args:
+            entity: "group.all_lights"
+      
+      - pattern: "0#"
+        description: "Lights off"
+        action:
+          handler: home_assistant.lights_off
+          args:
+            entity: "group.all_lights"
+            
+      - pattern: "2[0-9]{2}#"
+        description: "Set temperature"
+        action:
+          handler: home_assistant.set_temperature
+          args:
+            entity: "climate.thermostat"
+            transform: "temperature_from_digits"
+      
+      # Return to initial state if no match or timeout
+      on_timeout: initial
+      on_invalid: initial
+
+# Transformers for converting input
+transformers:
+  minutes_from_digits:
+    type: "int"
+    description: "Convert digit sequence to minutes"
+    
+  temperature_from_digits:
+    type: "int"
+    description: "Extract temperature from sequence"
+    min: 60
+    max: 85
+
+# Error handling
+errors:
+  invalid_sequence:
+    audio: "Invalid command sequence"
+    retry: true
+    
+  timeout:
+    audio: "Command timeout"
+    retry: false
+
+# Audio responses
+responses:
+  timer_created:
+    template: "Timer set for {minutes} minutes"
+  
+  lights_on:
+    text: "Lights turned on"
+    
+  lights_off:
+    text: "Lights turned off"
+    
+  temperature_set:
+    template: "Temperature set to {temperature} degrees"

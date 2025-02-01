@@ -17,7 +17,7 @@ class AudioError(Exception):
 
 class AudioService:
     """
-    Manages audio playback and text-to-speech through the DAHDI API
+    Manages audio playback and text-to-speech through the Phone API
     """
     def __init__(self, config: Config):
         self.config = config

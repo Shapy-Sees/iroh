@@ -28,7 +28,10 @@ notifications:
     - console
 
 phone:
-  dahdi_device: "/dev/dahdi/1"
+  api:
+    rest_url: "http://localhost:8000"
+    ws_url: "ws://localhost:8001/ws"
+    timeout: 30
   ring_timeout: 30
   dtmf_timeout: 5
   off_hook_timeout: 60
