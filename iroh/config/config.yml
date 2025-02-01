@@ -1,0 +1,60 @@
+# File: iroh/config/config.yml
+# Main configuration file for the Iroh Home Management System
+
+system:
+  name: "Iroh"
+  debug_mode: true
+  log_level: "DEBUG"
+  log_file: "iroh.log"
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+audio:
+  enable_tts: true
+  voice: "en-US-Standard-D"
+  volume: 0.8
+  audio_device: "default"
+  sample_rate: 44100
+  channels: 2
+
+notifications:
+  home_assistant:
+    url: "http://homeassistant.local:8123"
+    token: "your_token_here"
+    verify_ssl: true
+  
+  notification_methods:
+    - audio
+    - home_assistant
+    - console
+
+phone:
+  dahdi_device: "/dev/dahdi/1"
+  ring_timeout: 30
+  dtmf_timeout: 5
+  off_hook_timeout: 60
+
+timers:
+  audio_confirmation: true
+  default_duration: 5
+  max_concurrent: 10
+  notification_methods:
+    - audio
+    - home_assistant
+  reminder_intervals:
+    - 1  # 1 minute before
+    - 0  # At timer end
+
+debug:
+  enable_console_debug: true
+  log_dtmf: true
+  log_state_changes: true
+  log_commands: true
+  performance_monitoring: true
+  state_dump_interval: 300  # 5 minutes
+
+services:
+  ai:
+    enabled: false
+    model: "gpt-3.5-turbo"
+    temperature: 0.7
+    max_tokens: 150
