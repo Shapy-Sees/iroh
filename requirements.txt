@@ -12,6 +12,8 @@ websockets>=11.0.3
 
 # Audio processing
 numpy>=1.24.0
+pyttsx3>=2.90
+scipy>=1.11.0
 
 # Async support
 aiofiles>=23.1.0
@@ -25,6 +27,9 @@ python-json-logger>=2.0.7
 
 # Home Assistant integration
 aiohttp>=3.8.5
+
+# System monitoring
+psutil>=5.9.0
 
 # Development tools
 black>=23.7.0

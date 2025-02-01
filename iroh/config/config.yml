@@ -10,11 +10,17 @@ system:
 
 audio:
   enable_tts: true
-  voice: "en-US-Standard-D"
+  tts_engine: "pyttsx3"
+  voice: "english"  # Default voice
   volume: 0.8
-  audio_device: "default"
-  sample_rate: 44100
-  channels: 2
+  rate: 150  # Words per minute
+  pitch: 100  # Base pitch (100 is normal)
+  sample_rate: 8000  # Phone line compatible
+  channels: 1  # Mono for phone line
+  bit_depth: 16
+  cache_dir: "cache/audio"  # Directory for caching TTS audio
+  cache_enabled: true
+  cache_max_size: 100  # Maximum number of cached phrases
 
 notifications:
   home_assistant:
