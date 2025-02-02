@@ -63,12 +63,12 @@ class PhoneManager:
             logger.info("Connected to phone API server")
             
         except Exception as e:
-            logger.warning(
-                "Phone API running in degraded mode - "
-                "phone features will be unavailable"
-            )
-            logger.error(f"Failed to connect to phone API: {str(e)}", exc_info=True)
-            # Don't raise the error, allow system to continue in degraded mode
+            logger.error("CRITICAL: Failed to connect to phone API - system cannot function without phone service", exc_info=True)
+            logger.error(f"Connection error details: {str(e)}")
+            logger.error(f"Attempted to connect to WebSocket URL: {self.ws_url}")
+            logger.error("Please ensure the phone service is running and accessible")
+            # Raise the error since phone service is critical
+            raise PhoneError(f"Connection failed: {str(e)}")
     
     async def disconnect(self) -> None:
         """Disconnect from the phone API server"""
@@ -87,9 +87,20 @@ class PhoneManager:
                 await self.handle_phone_event(event)
                 
             except websockets.ConnectionClosed:
-                logger.error("WebSocket connection closed")
+                logger.error("CRITICAL: WebSocket connection to phone service was closed")
                 await self.disconnect()
-                break
+                
+                # Try to reconnect
+                retry_delay = 5  # seconds
+                logger.info(f"Attempting to reconnect in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                
+                try:
+                    await self.connect()
+                    continue
+                except Exception as e:
+                    logger.error(f"Failed to reconnect to phone service: {str(e)}", exc_info=True)
+                    break
                 
             except Exception as e:
                 logger.error(f"Error in event loop: {str(e)}", exc_info=True)
