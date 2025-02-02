@@ -26,7 +26,7 @@ class StateManager:
         # Component states
         self.phone_state = "idle"
         self.active_timers: Dict[str, Dict[str, Any]] = {}
-        self.last_command: Optional[Dict[str, Any]] = None
+        self.last_action: Optional[Dict[str, Any]] = None
         
         # Service states
         self.home_assistant_connected = False
@@ -36,10 +36,10 @@ class StateManager:
         # Debug information
         self.debug_info: Dict[str, Any] = {
             "state_changes": [],
-            "command_history": [],
+            "action_history": [],
             "error_log": [],
             "performance_metrics": {
-                "command_latency": [],
+                "action_latency": [],
                 "state_transitions": []
             }
         }
@@ -105,31 +105,31 @@ class StateManager:
         self.phone_state = state
         logger.debug(f"Phone state set to: {state}")
     
-    def set_last_command(self, command: Any) -> None:
+    def set_last_action(self, action: Any) -> None:
         """
-        Record last executed command
+        Record last executed action from state machine
         
         Args:
-            command: Command instance or dictionary
+            action: Action instance or dictionary
         """
         try:
-            command_data = {
+            action_data = {
                 "timestamp": datetime.now().isoformat(),
-                "command": command.name if hasattr(command, "name") else str(command),
-                "args": command.args if hasattr(command, "args") else {},
+                "type": action.type if hasattr(action, "type") else str(action),
+                "params": action.params if hasattr(action, "params") else {},
             }
             
-            self.last_command = command_data
+            self.last_action = action_data
             
-            # Add to command history
-            self.debug_info["command_history"].append(command_data)
-            if len(self.debug_info["command_history"]) > 100:
-                self.debug_info["command_history"].pop(0)
+            # Add to action history
+            self.debug_info["action_history"].append(action_data)
+            if len(self.debug_info["action_history"]) > 100:
+                self.debug_info["action_history"].pop(0)
             
-            logger.debug(f"Recorded command: {command_data['command']}")
+            logger.debug(f"Recorded action: {action_data['type']}")
             
         except Exception as e:
-            logger.error(f"Failed to record command: {str(e)}", exc_info=True)
+            logger.error(f"Failed to record action: {str(e)}", exc_info=True)
     
     def update_timer_state(self, timer_id: str, timer_data: Dict[str, Any]) -> None:
         """
@@ -227,7 +227,7 @@ class StateManager:
                 "state": self.phone_state
             },
             "timers": self.active_timers,
-            "last_command": self.last_command,
+            "last_action": self.last_action,
             "services": {
                 "home_assistant": self.home_assistant_connected,
                 "audio": self.audio_active,
@@ -254,10 +254,10 @@ class StateManager:
 # # Update system state
 # state_manager.set_state("processing")
 #
-# # Record command execution
-# state_manager.set_last_command({
-#     "name": "quick_timer",
-#     "args": {"minutes": 5}
+# # Record action execution
+# state_manager.set_last_action({
+#     "type": "timer",
+#     "params": {"minutes": 5}
 # })
 #
 # # Update timer state
@@ -268,8 +268,8 @@ class StateManager:
 #
 # # Log error
 # state_manager.log_error(
-#     "Command failed",
-#     {"command": "set_temperature", "reason": "connection_lost"}
+#     "Action failed",
+#     {"action": "set_temperature", "reason": "connection_lost"}
 # )
 #
 # # Get current state

@@ -9,7 +9,6 @@ from datetime import datetime
 
 from ..utils.logger import get_logger
 from ..utils.config import Config
-from ..core.command_parser import Command
 
 logger = get_logger(__name__)
 
@@ -65,8 +64,12 @@ class HomeAssistantService:
             
         except Exception as e:
             self._connected = False
+            logger.warning(
+                "Home Assistant integration running in degraded mode - "
+                "automation features will be unavailable"
+            )
             logger.error(f"Failed to connect to Home Assistant: {str(e)}", exc_info=True)
-            raise HomeAssistantError(f"Connection failed: {str(e)}")
+            # Don't raise the error, allow system to continue in degraded mode
     
     async def disconnect(self) -> None:
         """Disconnect from Home Assistant"""
@@ -74,61 +77,85 @@ class HomeAssistantService:
         await self._http_client.aclose()
         logger.info("Disconnected from Home Assistant")
     
-    async def handle_command(self, command: Command) -> None:
+    # Handler functions for DTMF state machine
+    
+    async def lights_on(self, input_str: str, entity: str = "group.all_lights") -> None:
         """
-        Handle a service command
+        Turn on lights handler
         
         Args:
-            command: Command instance to handle
-            
-        Raises:
-            HomeAssistantError: If command handling fails
+            input_str: DTMF input string (unused)
+            entity: Entity ID to control
         """
         try:
             if not self._connected:
-                raise HomeAssistantError("Not connected to Home Assistant")
+                logger.warning("Ignoring lights_on command - Home Assistant not connected")
+                return
             
-            # Extract command details
-            action = command.args.get("action")
-            entity = command.args.get("entity")
+            await self._call_service(
+                "light", "turn_on",
+                {"entity_id": entity}
+            )
             
-            if not action or not entity:
-                raise HomeAssistantError("Invalid command: missing action or entity")
-            
-            # Handle different actions
-            if action == "lights_on":
-                await self._call_service(
-                    "light", "turn_on",
-                    {"entity_id": entity}
-                )
-                
-            elif action == "lights_off":
-                await self._call_service(
-                    "light", "turn_off",
-                    {"entity_id": entity}
-                )
-                
-            elif action == "set_temperature":
-                temperature = command.args.get("temperature")
-                if not temperature:
-                    raise HomeAssistantError("Missing temperature value")
-                
-                await self._call_service(
-                    "climate", "set_temperature",
-                    {
-                        "entity_id": entity,
-                        "temperature": temperature
-                    }
-                )
-            
-            else:
-                raise HomeAssistantError(f"Unknown action: {action}")
-            
-            logger.info(f"Executed Home Assistant command: {action} on {entity}")
+            logger.info(f"Turned on lights: {entity}")
             
         except Exception as e:
-            logger.error(f"Command handling failed: {str(e)}", exc_info=True)
-            raise HomeAssistantError(f"Command handling failed: {str(e)}")
+            logger.error(f"Failed to turn on lights: {str(e)}", exc_info=True)
+            raise HomeAssistantError(f"Failed to turn on lights: {str(e)}")
+    
+    async def lights_off(self, input_str: str, entity: str = "group.all_lights") -> None:
+        """
+        Turn off lights handler
+        
+        Args:
+            input_str: DTMF input string (unused)
+            entity: Entity ID to control
+        """
+        try:
+            if not self._connected:
+                logger.warning("Ignoring lights_off command - Home Assistant not connected")
+                return
+            
+            await self._call_service(
+                "light", "turn_off",
+                {"entity_id": entity}
+            )
+            
+            logger.info(f"Turned off lights: {entity}")
+            
+        except Exception as e:
+            logger.error(f"Failed to turn off lights: {str(e)}", exc_info=True)
+            raise HomeAssistantError(f"Failed to turn off lights: {str(e)}")
+    
+    async def set_temperature(self, input_str: str, entity: str = "climate.thermostat") -> None:
+        """
+        Set temperature handler
+        
+        Args:
+            input_str: DTMF input string containing temperature value
+            entity: Entity ID to control
+        """
+        try:
+            if not self._connected:
+                logger.warning("Ignoring set_temperature command - Home Assistant not connected")
+                return
+            
+            # Input string should be transformed to temperature by state machine
+            temperature = float(input_str)
+            
+            await self._call_service(
+                "climate", "set_temperature",
+                {
+                    "entity_id": entity,
+                    "temperature": temperature
+                }
+            )
+            
+            logger.info(f"Set temperature to {temperature}°F on {entity}")
+            
+        except Exception as e:
+            logger.error(f"Failed to set temperature: {str(e)}", exc_info=True)
+            raise HomeAssistantError(f"Failed to set temperature: {str(e)}")
     
     async def get_state(self, entity_id: str) -> Dict[str, Any]:
         """
@@ -145,7 +172,8 @@ class HomeAssistantService:
         """
         try:
             if not self._connected:
-                raise HomeAssistantError("Not connected to Home Assistant")
+                logger.warning("Ignoring get_state request - Home Assistant not connected")
+                return {}
             
             response = await self._http_client.get(
                 f"{self.base_url}/api/states/{entity_id}",
@@ -209,7 +237,8 @@ class HomeAssistantService:
         """
         try:
             if not self._connected:
-                raise HomeAssistantError("Not connected to Home Assistant")
+                logger.warning("Ignoring update_states request - Home Assistant not connected")
+                return
             
             response = await self._http_client.get(
                 f"{self.base_url}/api/states",
@@ -230,20 +259,13 @@ class HomeAssistantService:
 # ha = HomeAssistantService(config)
 # await ha.connect()
 #
-# # Execute command
-# command = Command(
-#     name="service",
-#     args={
-#         "action": "lights_on",
-#         "entity": "group.all_lights"
-#     },
-#     raw_sequence=[]
-# )
-# await ha.handle_command(command)
+# # Register handlers with DTMF state machine
+# state_machine.register_handler("home_assistant.lights_on", ha.lights_on)
+# state_machine.register_handler("home_assistant.lights_off", ha.lights_off)
+# state_machine.register_handler("home_assistant.set_temperature", ha.set_temperature)
 #
 # # Get entity state
 # state = await ha.get_state("climate.thermostat")
 # print(f"Current temperature: {state['attributes']['current_temperature']}")
 #
 # # Cleanup
-# await ha.disconnect()

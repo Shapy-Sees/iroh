@@ -5,13 +5,13 @@
 from .operator import IrohOperator
 from .phone_manager import PhoneManager
 from .timer_manager import TimerManager
-from .command_parser import CommandParser
+from .dtmf_state_machine import DTMFStateMachine
 from .state_manager import StateManager
 
 __all__ = [
     'IrohOperator',
     'PhoneManager',
     'TimerManager',
-    'CommandParser',
+    'DTMFStateMachine',
     'StateManager'
 ]

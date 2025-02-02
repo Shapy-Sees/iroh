@@ -11,7 +11,7 @@ from ..utils.config import Config
 from .dtmf_state_machine import DTMFStateMachine
 from .timer_manager import TimerManager
 from ..services.audio_service import AudioService
-from ..services.home_assistant import HomeAssistant
+from ..services.home_assistant import HomeAssistantService
 
 logger = get_logger(__name__)
 
@@ -27,7 +27,7 @@ class PhoneManager:
         self,
         timer_manager: TimerManager,
         audio_service: AudioService,
-        home_assistant: HomeAssistant,
+        home_assistant: HomeAssistantService,
         config: Config
     ):
         self.timer_manager = timer_manager
@@ -36,7 +36,7 @@ class PhoneManager:
         self.config = config
         
         # Initialize state machine
-        self.dtmf_machine = DTMFStateMachine()
+        self.dtmf_machine = DTMFStateMachine("iroh/config/dtmf_commands.yml")
         self._setup_handlers()
         
         # Track phone state
@@ -63,8 +63,12 @@ class PhoneManager:
             logger.info("Connected to phone API server")
             
         except Exception as e:
+            logger.warning(
+                "Phone API running in degraded mode - "
+                "phone features will be unavailable"
+            )
             logger.error(f"Failed to connect to phone API: {str(e)}", exc_info=True)
-            raise PhoneError(f"Connection failed: {str(e)}")
+            # Don't raise the error, allow system to continue in degraded mode
     
     async def disconnect(self) -> None:
         """Disconnect from the phone API server"""
@@ -217,7 +221,7 @@ class PhoneManager:
     async def _handle_lights_on(self, input_str: str, entity: str) -> None:
         """Turn on lights"""
         try:
-            await self.home_assistant.turn_on(entity)
+            await self.home_assistant.lights_on(input_str, entity)
             await self.audio.speak("Lights turned on")
         except Exception as e:
             logger.error(f"Error turning lights on: {str(e)}", exc_info=True)
@@ -226,7 +230,7 @@ class PhoneManager:
     async def _handle_lights_off(self, input_str: str, entity: str) -> None:
         """Turn off lights"""
         try:
-            await self.home_assistant.turn_off(entity)
+            await self.home_assistant.lights_off(input_str, entity)
             await self.audio.speak("Lights turned off")
         except Exception as e:
             logger.error(f"Error turning lights off: {str(e)}", exc_info=True)
@@ -239,7 +243,7 @@ class PhoneManager:
     ) -> None:
         """Set thermostat temperature"""
         try:
-            await self.home_assistant.set_temperature(entity, temperature)
+            await self.home_assistant.set_temperature(str(temperature), entity)
             await self.audio.speak(f"Temperature set to {temperature} degrees")
         except Exception as e:
             logger.error(f"Error setting temperature: {str(e)}", exc_info=True)

@@ -11,7 +11,7 @@ from ..utils.config import Config
 from ..utils.debug import DebugUtils
 from .phone_manager import PhoneManager
 from .timer_manager import TimerManager
-from .command_parser import CommandParser
+from .dtmf_state_machine import DTMFStateMachine
 from .state_manager import StateManager
 from ..services.audio_service import AudioService
 from ..services.notification import NotificationService
@@ -30,7 +30,7 @@ class IrohOperator:
         # Core components
         self.phone: Optional[PhoneManager] = None
         self.timers: Optional[TimerManager] = None
-        self.commands: Optional[CommandParser] = None
+        self.state_machine: Optional[DTMFStateMachine] = None
         self.state: Optional[StateManager] = None
         
         # Services
@@ -97,8 +97,8 @@ class IrohOperator:
     async def _load_configuration(self) -> None:
         """Load and validate system configuration"""
         try:
-            config_path = "config/config.yml"
-            commands_path = "config/commands.yml"
+            config_path = "iroh/config/config.yml"
+            commands_path = "iroh/config/commands.yml"
             
             logger.debug(f"Loading configuration from {config_path} and {commands_path}")
             await self.config.load(config_path, commands_path)
@@ -118,8 +118,29 @@ class IrohOperator:
             # Initialize core components
             self.state = StateManager()
             self.timers = TimerManager(self.audio)
-            self.commands = CommandParser()
-            self.phone = PhoneManager(self.config)
+            self.state_machine = DTMFStateMachine("iroh/config/dtmf_commands.yml")
+            
+            # Register state machine handlers
+            self.state_machine.register_handler("timer_manager.quick_timer", 
+                                             self.timers.quick_timer)
+            # Register Home Assistant handlers
+            self.state_machine.register_handler("home_assistant.lights_on",
+                                             self.home_assistant.lights_on)
+            self.state_machine.register_handler("home_assistant.lights_off",
+                                             self.home_assistant.lights_off)
+            self.state_machine.register_handler("home_assistant.set_temperature",
+                                             self.home_assistant.set_temperature)
+            
+            # Start state machine
+            await self.state_machine.start()
+            
+            # Initialize phone manager
+            self.phone = PhoneManager(
+                timer_manager=self.timers,
+                audio_service=self.audio,
+                home_assistant=self.home_assistant,
+                config=self.config
+            )
             
             # Connect required services
             await self.home_assistant.connect()
@@ -168,16 +189,16 @@ class IrohOperator:
             # Get old state for logging
             old_state = self.state.get_state() if self.state else {}
             
-            # Parse event into command
-            command = await self.commands.parse_sequence([event])
-            
-            if command:
-                # Log command if debugging enabled
+            # Process event through state machine
+            if self.state_machine:
+                # Log event if debugging enabled
                 if self.config.get("debug.log_commands", False):
-                    self.debug.log_command(command.name, command.args)
+                    self.debug.log_command("state_machine_event", event)
                 
-                # Execute command
-                await self._execute_command(command)
+                # Process event through state machine
+                await self.state_machine.handle_event(event.get("type", ""), event.get("value", ""))
+                # Note: State machine handles actions internally through registered handlers
+                
             
             # Log state change if debugging enabled
             if self.config.get("debug.log_state_changes", False):
@@ -191,35 +212,6 @@ class IrohOperator:
             if self.audio:
                 await self.audio.speak("Sorry, there was an error processing that command")
     
-    async def _execute_command(self, command: Any) -> None:
-        """
-        Execute a parsed command
-        
-        Args:
-            command: Command object to execute
-        """
-        try:
-            # Update state
-            if self.state:
-                self.state.set_last_command(command)
-            
-            # Handle different command types
-            if command.name == "quick_timer":
-                await self.timers.quick_timer(command.args.get("minutes", 1))
-            
-            elif command.name == "service":
-                await self.home_assistant.handle_command(command)
-            
-            elif command.name == "voice":
-                await self.audio.start_voice_recognition()
-            
-            else:
-                logger.warning(f"Unknown command type: {command.name}")
-                
-        except Exception as e:
-            logger.error(f"Error executing command: {str(e)}", exc_info=True)
-            raise
-
 # Example usage:
 #
 # operator = IrohOperator()

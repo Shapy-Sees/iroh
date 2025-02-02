@@ -1,6 +1,6 @@
 # File: iroh/config/dtmf_commands.yml
 # DTMF command configuration for the Iroh Home Management System
-# Defines the state machine and command patterns for phone input handling
+# Defines states and handlers for phone input processing
 
 # Global settings
 settings:
@@ -11,52 +11,76 @@ settings:
 # State definitions
 states:
   initial:
-    description: "Base state when phone is picked up"
-    on_enter:
-      - announce_active_timers
+    description: "Initial state waiting for command input"
+    timeout: 5000
+    on_enter: ["announce_ready"]
+    on_timeout: "idle"
+    on_invalid: "error"
     handlers:
-      - type: digits
-        description: "Direct timer input"
+      # Timer command
+      - type: "pattern"
         pattern: "[0-9]+"
+        description: "Create a timer for specified minutes"
         terminator: "#"
         action:
-          handler: timer_manager.create_timer
+          handler: "timer_manager.create_timer"
           transform: "minutes_from_digits"
+        next_state: "initial"
       
-      - type: star
-        description: "Enter command mode"
-        pattern: "*"
-        next_state: command_mode
-
-  command_mode:
-    description: "Mode after * is pressed"
-    timeout: 3000  # ms
-    handlers:
-      - pattern: "1#"
-        description: "Lights on"
+      # Light control commands
+      - type: "pattern"
+        pattern: "\\*1"
+        description: "Turn all lights on"
+        terminator: "#"
         action:
-          handler: home_assistant.lights_on
+          handler: "home_assistant.lights_on"
           args:
             entity: "group.all_lights"
-      
-      - pattern: "0#"
-        description: "Lights off"
+        next_state: "initial"
+        
+      - type: "pattern"
+        pattern: "\\*0"
+        description: "Turn all lights off"
+        terminator: "#"
         action:
-          handler: home_assistant.lights_off
+          handler: "home_assistant.lights_off"
           args:
             entity: "group.all_lights"
-            
-      - pattern: "2[0-9]{2}#"
-        description: "Set temperature"
+        next_state: "initial"
+      
+      # Temperature control
+      - type: "pattern"
+        pattern: "\\*2[0-9]{2}"
+        description: "Set thermostat temperature"
+        terminator: "#"
         action:
-          handler: home_assistant.set_temperature
+          handler: "home_assistant.set_temperature"
           args:
             entity: "climate.thermostat"
             transform: "temperature_from_digits"
-      
-      # Return to initial state if no match or timeout
-      on_timeout: initial
-      on_invalid: initial
+        next_state: "initial"
+
+  idle:
+    description: "Idle state after timeout"
+    timeout: 10000
+    on_enter: ["play_timeout"]
+    handlers:
+      - type: "pattern"
+        pattern: "."
+        description: "Any input returns to initial state"
+        action: {}
+        next_state: "initial"
+
+  error:
+    description: "Error state after invalid input"
+    timeout: 3000
+    on_enter: ["play_error"]
+    handlers:
+      - type: "pattern"
+        pattern: "."
+        description: "Any input returns to initial state"
+        action: {}
+        next_state: "initial"
 
 # Transformers for converting input
 transformers:
@@ -69,16 +93,6 @@ transformers:
     description: "Extract temperature from sequence"
     min: 60
     max: 85
-
-# Error handling
-errors:
-  invalid_sequence:
-    audio: "Invalid command sequence"
-    retry: true
-    
-  timeout:
-    audio: "Command timeout"
-    retry: false
 
 # Audio responses
 responses:
@@ -93,3 +107,12 @@ responses:
     
   temperature_set:
     template: "Temperature set to {temperature} degrees"
+    
+  ready:
+    text: "Ready for command"
+    
+  error:
+    text: "Invalid command sequence"
+    
+  timeout:
+    text: "Command timeout"

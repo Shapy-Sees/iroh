@@ -1,0 +1,37 @@
+# File: iroh/config/commands.yml
+# Command configuration for the Iroh Home Management System
+# Defines available commands and their configurations
+
+commands:
+  # Timer commands
+  create_timer:
+    trigger: "timer"
+    enabled: true
+    handler: "timer_manager.create_timer"
+    description: "Create a new timer"
+
+  # Light control commands
+  lights_on:
+    trigger: "lights_on"
+    enabled: true
+    handler: "home_assistant.lights_on"
+    description: "Turn all lights on"
+    args:
+      entity: "group.all_lights"
+
+  lights_off:
+    trigger: "lights_off"
+    enabled: true
+    handler: "home_assistant.lights_off"
+    description: "Turn all lights off"
+    args:
+      entity: "group.all_lights"
+
+  # Temperature control
+  set_temperature:
+    trigger: "set_temp"
+    enabled: true
+    handler: "home_assistant.set_temperature"
+    description: "Set thermostat temperature"
+    args:
+      entity: "climate.thermostat"
